@@ -68,6 +68,18 @@ const header=(i,t)=>{const h=document.createElement("h2");h.className="text-2xl 
 const label=t=>{const p=document.createElement("p");p.className="text-xl font-medium mb-4";p.textContent=t;return p};
 const genCode=()=>String(Math.floor(1000+Math.random()*9000));
 
+
+/* 🔧 Алиасы, чтобы код врача работал без ошибок */
+const qLabel = label;            // старое имя в функции renderDoctor
+const bigBtn = makeBtn;          // переименовали кнопку, вернём алиас
+const makeSlider = sliderWidget; // тот же виджет
+const noteMulti = () => {        // подсказка «можно выбрать несколько»
+  const p=document.createElement("p");
+  p.className="text-sm text-gray-600 mb-2";
+  p.textContent="Можно выбрать несколько вариантов";
+  return p;
+};
+
 /**************** Widgets ****************/
 function sliderWidget(q){const num=document.createElement("input");num.type="number";num.min=q.min;num.max=q.max;num.value=q.start||q.min;num.className=baseInput;
  const big=document.createElement("div");big.className="flex justify-center my-4 text-4xl font-bold";
