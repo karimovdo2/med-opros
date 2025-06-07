@@ -13,96 +13,111 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
   <style>
+    /* larger slider knob */
     input[type=range].big-thumb::-webkit-slider-thumb,
-    input[type=range].big-thumb::-moz-range-thumb{width:32px;height:32px;border-radius:50%;background:#4f46e5;cursor:pointer;box-shadow:0 0 6px rgba(0,0,0,.25)}
+    input[type=range].big-thumb::-moz-range-thumb{
+      width:32px;height:32px;border-radius:50%;background:#4f46e5;cursor:pointer;box-shadow:0 0 6px rgba(0,0,0,.25)}
   </style>
-</head>
-<body class="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-4">
-<header class="w-full flex justify-center mt-6"><img src="./img/logo.png" alt="Med" class="w-24 h-24 select-none pointer-events-none"/></header>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
-import { getFirestore, collection, addDoc, doc, getDoc, updateDoc, getDocs, query, where } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
+  <script type="module">
+    /************* 1. Firebase *************/
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, doc, getDoc, updateDoc, getDocs, query, where } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
 
-/* Firebase */
-const firebaseConfig={ apiKey:"YOUR_API_KEY", authDomain:"clinic-quiz.firebaseapp.com", projectId:"clinic-quiz", storageBucket:"clinic-quiz.appspot.com", messagingSenderId:"YOUR_SENDER_ID", appId:"YOUR_APP_ID"};
-const app=initializeApp(firebaseConfig); const db=getFirestore(app);
+    const firebaseConfig={ apiKey:"YOUR_API_KEY", authDomain:"clinic-quiz.firebaseapp.com", projectId:"clinic-quiz", storageBucket:"clinic-quiz.appspot.com", messagingSenderId:"YOUR_SENDER_ID", appId:"YOUR_APP_ID"};
+    const app=initializeApp(firebaseConfig); const db=getFirestore(app);
 
-/* Questions */
-const patientQuestions=[
-  {type:"text",   label:"Фамилия Имя Отчество"},
-  {type:"slider", label:"Возраст",  min:0,max:99,start:30,unit:" лет"},
-  {type:"slider", label:"Вес",      min:30,max:200,start:70,unit:" кг"},
-  {type:"single", label:"Озноб за сутки", options:[{label:"Нет",score:0},{label:"Небольшой",score:-2},{label:"Сильный",score:-4}]},
-  {type:"multi",  label:"Симптомы", options:[{label:"Кашель",score:1},{label:"Насморк",score:1},{label:"Головная боль",score:2},{label:"Боль в горле",score:2},{label:"Одышка",score:3}]},
-  {type:"pain",   label:"Оцените боль (🔥 1–5)"},
-  {type:"emoji",  label:"Уровень энергии", emojiSet:"happy"},
-  {type:"emoji",  label:"Уровень тревоги", emojiSet:"sad"},
-  {type:"slider", label:"Настроение", min:1,max:10,start:5,unit:"/10"},
-  {type:"text",   label:"Ожидания от визита"}
-];
+    /************* 2. Questions *************/
+    const patientQuestions=[
+      {type:"text",   label:"Фамилия Имя Отчество"},
+      {type:"slider", label:"Возраст", min:0,max:99,start:30,unit:" лет"},
+      {type:"slider", label:"Вес",    min:30,max:200,start:70,unit:" кг"},
+      {type:"single", label:"Был ли озноб за последние сутки?", options:[
+          {label:"Нет",score:0},
+          {label:"Небольшой",score:-2},
+          {label:"Сильный",score:-4}
+      ]},
+      {type:"multi",  label:"Выберите жалобы", options:[
+          {label:"Кашель",score:1},
+          {label:"Насморк",score:1},
+          {label:"Головная боль",score:2},
+          {label:"Боль в горле",score:2},
+          {label:"Одышка",score:3}
+      ]},
+      {type:"pain",   label:"Оцените боль (1–5)"},
+      {type:"emoji",  label:"Уровень энергии", emojiSet:"happy"},
+      {type:"emoji",  label:"Уровень тревоги", emojiSet:"sad"},
+      {type:"slider", label:"Настроение", min:1,max:10,start:5,unit:"/10"},
+      {type:"text",   label:"Опишите ваши ожидания от визита"}
+    ];
 
-const doctorQuestions=[
-  {type:"slider", label:"SpO₂",min:0,max:100,start:97,unit:"%", scoreFormula:v=>v<95?2:0},
-  {type:"single", label:"Аускультация", options:[{label:"Везикулярное",score:0},{label:"Ослабленное",score:1},{label:"Хрипы",score:2}]},
-  {type:"slider", label:"ЧД в минуту",min:10,max:40,start:16,unit:" вд/мин"},
-  {type:"emoji",  label:"Общее состояние", emojiSet:"sad"},
-  {type:"multi",  label:"Лечение", options:[{label:"Антибиотик",score:1},{label:"Жаропонижающее",score:1},{label:"Ингаляции",score:1},{label:"Госпитализация",score:2}]}
-];
+    const doctorQuestions=[
+      {type:"slider", label:"SpO₂ (%)", min:0,max:100,start:97,unit:"%", scoreFormula:v=>v<95?2:0},
+      {type:"single", label:"Аускультация лёгких", options:[
+          {label:"Везикулярное",score:0},
+          {label:"Ослабленное", score:1},
+          {label:"Хрипы",        score:2}
+      ]},
+      {type:"slider", label:"Частота дыхания (в минуту)", min:10,max:40,start:16,unit:" вд/мин"},
+      {type:"emoji",  label:"Общее состояние пациента", emojiSet:"sad"},
+      {type:"multi",  label:"Назначенное лечение", options:[
+          {label:"Антибиотик",score:1},
+          {label:"Жаропонижающее",score:1},
+          {label:"Ингаляции",score:1},
+          {label:"Госпитализация",score:2}
+      ]}
+    ];
 
-/***** DOM helpers *****/
-const root=document.body;
-const baseInput="w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
-const card=()=>{const d=document.createElement("div");d.className="max-w-lg w-full bg-white/80 backdrop-blur rounded-xl p-6 mx-auto mt-12 shadow-xl";return d};
-const makeBtn=(t,c="indigo")=>{const b=document.createElement("button");b.textContent=t;b.className=`w-full py-3 mt-4 rounded-lg text-lg font-semibold text-white bg-${c}-600 hover:bg-${c}-700 transition`;return b};
-const header=(i,t)=>{const h=document.createElement("h2");h.className="text-2xl font-semibold mb-6 text-center";h.textContent=`Шаг ${i+1} из ${t}`;return h};
-const label=t=>{const p=document.createElement("p");p.className="text-xl font-medium mb-4";p.textContent=t;return p};
-const genCode=()=>String(Math.floor(1000+Math.random()*9000));
+    /************* 3. DOM helpers *************/
+    const root=document.body;
+    const baseInput="w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
+    const card=()=>{const d=document.createElement("div");d.className="max-w-lg w-full bg-white/80 backdrop-blur rounded-xl p-6 mx-auto mt-12 shadow-xl";return d};
+    const btn=(t,c="indigo")=>{const b=document.createElement("button");b.textContent=t;b.className=`w-full py-3 mt-4 rounded-lg text-lg font-semibold text-white bg-${c}-600 hover:bg-${c}-700 transition`;return b};
+    const stepHeader=(i,total)=>{const h=document.createElement("h2");h.className="text-2xl font-semibold mb-6 text-center";h.textContent=`Шаг ${i+1} из ${total}`;return h};
+    const qLabel=t=>{const p=document.createElement("p");p.className="text-xl font-medium mb-4";p.textContent=t;return p};
+    const genCode=()=>String(Math.floor(1000+Math.random()*9000));
 
-/***** Widgets *****/
-function sliderWidget(q){const num=document.createElement("input");num.type="number";num.min=q.min;num.max=q.max;num.value=q.start||q.min;num.className=baseInput;
- const big=document.createElement("div");big.className="flex justify-center my-4 text-4xl font-bold";
- const span=document.createElement("span");span.textContent=num.value+(q.unit||"");big.appendChild(span);
- const range=document.createElement("input");range.type="range";range.min=q.min;range.max=q.max;range.value=num.value;range.className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer big-thumb";
- const sync=v=>{num.value=v;range.value=v;span.textContent=v+(q.unit||"");};
- num.oninput=()=>sync(Math.max(q.min,Math.min(q.max,Number(num.value)||q.min)));
- range.oninput=()=>sync(range.value);
- const wrap=document.createElement("div");wrap.append(num,big,range);
- return {wrap,val:()=>Number(range.value)};}
+    /* slider */
+    function sliderWidget(q){const num=document.createElement("input");num.type="number";num.min=q.min;num.max=q.max;num.value=q.start||q.min;num.className=baseInput;
+      const span=document.createElement("span");span.textContent=num.value+(q.unit||"");span.className="text-4xl font-bold";
+      const top=document.createElement("div");top.className="flex justify-center my-4";top.appendChild(span);
+      const range=document.createElement("input");range.type="range";range.min=q.min;range.max=q.max;range.value=num.value;range.className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer big-thumb";
+      const sync=v=>{num.value=v;range.value=v;span.textContent=v+(q.unit||"");};
+      num.oninput=()=>sync(Math.max(q.min,Math.min(q.max,Number(num.value)||q.min)));
+      range.oninput=()=>sync(range.value);
+      const wrap=document.createElement("div");wrap.append(num,top,range);return {wrap,val:()=>Number(range.value)};}
 
-function emojiWidget(char,base){let v=3;
- const num=document.createElement("input");num.type="number";num.min=1;num.max=5;num.value=v;num.className=baseInput;
- const scale=document.createElement("div");scale.className="flex justify-between items-end my-4";
- for(let i=1;i<=5;i++){const col=document.createElement("div");col.className="flex flex-col items-center";const e=document.createElement("span");e.textContent=char;e.style.fontSize=`${base+i*0.3}rem`;const s=document.createElement("span");s.textContent=i;s.className="text-sm mt-1";col.append(e,s);scale.appendChild(col);} 
- const range=document.createElement("input");range.type="range";range.min=1;range.max=5;range.value=v;range.className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer big-thumb";
- const sync=x=>{v=x;num.value=x;range.value=x};
- num.oninput=()=>sync(Math.max(1,Math.min(5,Number(num.value)||1)));
- range.oninput=()=>sync(range.value);
- const wrap=document.createElement("div");wrap.append(num,scale,range);
- return {wrap,val:()=>v};}
+    /* emoji */
+    function emojiWidget(char,base){let v=3;
+      const num=document.createElement("input");num.type="number";num.min=1;num.max=5;num.value=v;num.className=baseInput;
+      const scale=document.createElement("div");scale.className="flex justify-between items-end my-4";
+      for(let i=1;i<=5;i++){const col=document.createElement("div");col.className="flex flex-col items-center";const e=document.createElement("span");e.textContent=char;e.style.fontSize=`${base+i*0.3}rem`;const lbl=document.createElement("span");lbl.textContent=i;lbl.className="text-sm mt-1";col.append(e,lbl);scale.appendChild(col);}  
+      const range=document.createElement("input");range.type="range";range.min=1;range.max=5;range.value=v;range.className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer big-thumb";
+      const sync=x=>{v=x;num.value=x;range.value=x};
+      num.oninput=()=>sync(Math.max(1,Math.min(5,Number(num.value)||1)));
+      range.oninput=()=>sync(range.value);
+      const wrap=document.createElement("div");wrap.append(num,scale,range);return {wrap,val:()=>v};}
 
-/***** Patient flow *****/
-async function initPatient(){const answers=[];let step=0;const box=card();root.appendChild(box);render();
- function render(){box.innerHTML="";const q=patientQuestions[step];box.append(header(step,patientQuestions.length));const w=card();w.className="mb-6";w.append(label(q.label));
- let widget,selections=[];
- if(q.type==="text"){const inp=document.createElement("input");inp.type="text";inp.className=baseInput;w.appendChild(inp);
- box.append(w,makeBtn("Далее"));box.lastChild.onclick=()=>{const v=inp.value.trim();if(!v)return alert("Введите значение");answers.push(v);next();};}
- else if(["slider","number","age"].includes(q.type)){widget=sliderWidget(q);w.append(widget.wrap);box.append(w,makeBtn("Далее"));box.lastChild.onclick=()=>{answers.push(widget.val());next();};}
- else if(q.type==="single"){const cont=document.createElement("div");q.options.forEach((o,i)=>{const b=makeBtn(o.label);b.classList.remove("text-white","bg-indigo-600");b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50";b.onclick=()=>{answers.push(i);next();};cont.appendChild(b);});w.append(cont);box.appendChild(w);}
- else if(q.type==="multi"){const note=document.createElement("p");note.className="text-sm text-gray-600 mb-2";note.textContent="Можно выбрать несколько";w.appendChild(note);
- const cont=document.createElement("div");q.options.forEach((o,i)=>{const b=makeBtn(o.label,"emerald");b.classList.remove("text-white","bg-emerald-600");b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50";b.onclick=()=>{selections.includes(i)?(selections=selections.filter(x=>x!==i),b.classList.remove("bg-emerald-200")):(selections.push(i),b.classList.add("bg-emerald-200"));};cont.appendChild(b);});w.append(cont);box.append(w,makeBtn("Далее"));box.lastChild.onclick=()=>{answers.push(selections);next();};}
- else if(q.type==="pain"){widget=emojiWidget("🔥",1);w.append(widget.wrap);box.append(w,makeBtn("Далее"));box.lastChild.onclick=()=>{answers.push(widget.val());next();};}
- else if(q.type==="emoji"){const char=q.emojiSet==="sad"?"😞":"😊";widget=emojiWidget(char,0.8);w.append(widget.wrap);box.append(w,makeBtn("Далее"));box.lastChild.onclick=()=>{answers.push(widget.val());next();};}
- }
- function next(){step++;step<patientQuestions.length?render():complete();}
- async function complete(){const code=genCode();const data={code,createdAt:Date.now()};patientQuestions.forEach((_,i)=>data[`p${i+1}`]=answers[i]);const ref=await addDoc(collection
-
-
+    /************* 4. Patient flow *************/
+    async function initPatient(){const ans=[];let step=0;const box=card();root.appendChild(box);render();
+      function render(){box.innerHTML="";const q=patientQuestions[step];box.append(stepHeader(step,patientQuestions.length));const wrap=document.createElement("div");wrap.className="mb-6";wrap.append(qLabel(q.label));
+        let w; let selections=[];
+        if(q.type==="text"){const inp=document.createElement("input");inp.type="text";inp.className=baseInput;wrap.append(inp);box.append(wrap,btn("Далее"));box.lastChild.onclick=()=>{const v=inp.value.trim();if(!v)return alert("Введите значение");ans.push(v);next();};}
+        else if(["slider","number","age"].includes(q.type)){w=sliderWidget(q);wrap.append(w.wrap);box.append(wrap,btn("Далее"));box.lastChild.onclick=()=>{ans.push(w.val());next();};}
+        else if(q.type==="single"){const container=document.createElement("div");q.options.forEach((o,i)=>{const b=btn(o.label);b.classList.remove("bg-indigo-600","text-white");b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50";b.onclick=()=>{ans.push(i);next();};container.append(b);});wrap.append(container);box.append(wrap);} 
+        else if(q.type==="multi"){wrap.append(noteMulti());const cont=document.createElement("div");q.options.forEach((o,i)=>{const b=btn(o.label,"emerald");b.classList.remove("bg-emerald-600","text-white");b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50";b.onclick=()=>{selections.includes(i)?(selections=selections.filter(x=>x!==i),b.classList.remove("bg-emerald-200")):(selections.push(i),b.classList.add("bg-emerald-200"));};cont.append(b);});wrap.append(cont);box.append(wrap,btn("Далее"));box.lastChild.onclick=()=>{ans.push(selections);next();};}
+        else if(q.type==="pain"){w=emojiWidget("🔥",1);
+          wrap.append(w.wrap);box.append(wrap,btn("Далее"));box.lastChild.onclick=()=>{ans.push(w.val());next();};}
+        else if(q.type==="emoji"){const ch=q.emojiSet==="sad"?"😞":"😊";w=emojiWidget(ch,0.8);wrap.append(w.wrap);box.append(wrap,btn("Далее"));box.lastChild.onclick=()=>{ans.push(w.val());next();};}
+      }
+      function next(){step++;step<patientQuestions.length?render():finish();}
+      async function finish(){const code=genCode();const data={code,createdAt:Date.now()};patientQuestions.forEach((_,i)=>data[`p${i+1}`]=ans[i]);const ref=await addDoc(collection(db,"surveys"),data);showQr(code,ref.id);} }
 
     /************* 5. QR *************/
     function showQr(code,id){root.innerHTML="";const c=card();const p=document.createElement("p");p.className="text-center text-xl mb-4";p.innerHTML=`Ваш <span class='font-bold text-5xl block my-2'>${code}</span><br>Передайте код врачу`;
       const link=`${location.origin}${location.pathname}?role=doctor&id=${id}`;const cv=document.createElement("canvas");new QRious({element:cv,value:link,size:220});const a=document.createElement("a");a.href=link;a.textContent=link;a.className="block text-center text-indigo-600 underline mt-4 break-all";c.append(p,cv
-
+    
+    
     
       /* ========= 6. Doctor ========= */
     async function initDoctor(){const u=new URL(location.href);const id=u.searchParams.get("id");if(id){renderDoctor(id);}else{renderDoctorSearch();}}
