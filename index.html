@@ -1,437 +1,403 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Мед-опрос</title>
-<link rel="icon" href="data:,"><!-- пустая иконка -->
-<!-- Tailwind CDN (можно оставить, размер небольшой) -->
-<script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Клинический опросник</title>
+  <!-- Tailwind CSS CDN (для демо) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS (Excel) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- QRious -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+  <!-- Firebase v9 -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      addDoc,
+      doc,
+      getDoc,
+      updateDoc,
+      getDocs,
+      query,
+      where
+    } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
 
-<!-- Firebase (modular SDK v9) -->
-<script type="module">
-/*-------------------------------------------------------
-  1.  🔧  ВСТАВЬТЕ СВОЙ firebaseConfig
--------------------------------------------------------*/
-const firebaseConfig = {
-  apiKey: "###",
-  authDomain: "###",
-  projectId: "###",
-  storageBucket: "clinic-quiz.appspot.com",
-  messagingSenderId: "###",
-  appId: "###"
-};
+    /* ========= 1. Подключаем Firebase ========= */
+    // 👉 Замените на ваш конфиг
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "clinic-quiz.firebaseapp.com",
+      projectId: "clinic-quiz",
+      storageBucket: "clinic-quiz.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
 
-/*-------------------------------------------------------
-  2.  ИНИЦИАЛИЗАЦИЯ
--------------------------------------------------------*/
-import { initializeApp }  from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
-import {
-  getFirestore, collection, addDoc, doc, getDoc, getDocs, query, where,
-  updateDoc
-} from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
-import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.19.3/+esm";
+    /* ========= 2. Описание вопросов ========= */
+    const patientQuestions = [
+      { type: "text",   label: "Фамилия Имя Отчество" },
+      { type: "number", label: "Возраст (полных лет)" },
+      { type: "single", label: "Был ли озноб за последние сутки?", options: ["Нет", "Небольшой", "Сильный"] },
+      { type: "multi",  label: "Отметьте симптомы", options: ["Кашель", "Насморк", "Головная боль", "Боль в горле"] },
+      { type: "single", label: "Оцените боль (0 – 5)", options: ["0", "1", "2", "3", "4", "5"] }
+    ];
 
-const app = initializeApp(firebaseConfig);
-const db  = getFirestore(app);
+    const doctorQuestions = [
+      { type: "single", label: "Аускультация лёгких", options: ["Везикулярное", "Ослабленное", "Хрипы"] },
+      { type: "number", label: "SpO₂ (%)" },
+      { type: "multi",  label: "Назначенное лечение", options: ["Антибиотик", "Жаропонижающее", "Ингаляции", "Госпитализация"] }
+    ];
 
-/*-------------------------------------------------------
-  3.  ДАННЫЕ ВОПРОСОВ
--------------------------------------------------------*/
-const patientQuestions = [
-  {type:"text",  label:"Фамилия, имя, отчество"},
-  {type:"number",label:"Возраст, лет"},
-  {type:"single",label:"Была ли температура > 38 ℃ за последние сутки?",
-    options:["Нет","Да, кратковременно","Да, держится"]},
-  {type:"multi", label:"Отметьте факторы риска",
-    options:["Курение","Артериальная гипертензия","Сахарный диабет","ХОБЛ"]},
-  {type:"single",label:"Оцените боль по шкале 0–10",
-    options:["0","1","2","3","4","5","6","7","8","9","10"]}
-];
-
-const doctorQuestions = [
-  {type:"single",label:"Есть ли кашель?",
-    options:["Нет","Сухой","Влажный"]},
-  {type:"single",label:"SpO₂ по пульсоксиметру",
-    options:["≥ 95 %","90 – 94 %","< 90 %"]},
-  {type:"multi", label:"Назначено лечение",
-    options:["Антибиотик","Жаропонижающее","Ингаляции","Госпитализация"]}
-];
-
-/*-------------------------------------------------------
-  4.  ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
--------------------------------------------------------*/
-let role = new URLSearchParams(location.search).get("role") || "patient";
-let docId = new URLSearchParams(location.search).get("id");
-let code;                               // 4-значный код
-let step = 0;                           // индекс текущего вопроса
-let patientAnswers = [];
-let doctorAnswers  = [];
-
-/*-------------------------------------------------------
-  5.  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
--------------------------------------------------------*/
-const $ = sel => document.querySelector(sel);
-
-function generateCode(){
-  return Math.floor(1000 + Math.random()*9000).toString();
-}
-
-// веса для примера
-function calculateScore(pA, dA){
-  let score = 0;
-  // температура
-  if(pA[2] === 1) score += 1;     // кратковременно
-  if(pA[2] === 2) score += 2;     // держится
-  // боль
-  score += parseInt(pA[4] || 0);
-  // кашель
-  if(dA[0] === 1) score += 2;
-  if(dA[0] === 2) score += 4;
-  // SpO2
-  if(dA[1] === 1) score += 2;
-  if(dA[1] === 2) score += 4;
-  // каждое лечение +1
-  if(Array.isArray(dA[2])) score += dA[2].length;
-  return score;
-}
-
-/*-------------------------------------------------------
-  6.  РЕНДЕР ПАЦИЕНТА
--------------------------------------------------------*/
-function renderPatientStep(){
-  const q = patientQuestions[step];
-  $("#title").textContent = q.label;
-  $("#options").innerHTML = "";
-  $("#hint").classList.add("hidden");
-  $("#inputText").classList.add("hidden");
-  $("#nextBtn").classList.add("hidden");
-
-  if(q.type === "text" || q.type === "number"){
-    $("#inputText").type = q.type==="number" ? "number" : "text";
-    $("#inputText").value = "";
-    $("#inputText").classList.remove("hidden");
-    $("#nextBtn").textContent = "Далее";
-    $("#nextBtn").classList.remove("hidden");
-    $("#inputText").focus();
-  }
-
-  if(q.type === "single" || q.type === "multi"){
-    if(q.type==="multi"){
-      $("#hint").classList.remove("hidden");
-      $("#nextBtn").textContent = "Далее (можно несколько)";
-      $("#nextBtn").classList.remove("hidden");
+    /* ========= 3. Утилиты ========= */
+    const root = document.body;
+    function card() {
+      const d = document.createElement("div");
+      d.className = "max-w-lg w-full bg-white/80 backdrop-blur rounded-xl p-6 mx-auto mt-12 shadow-xl";
+      return d;
     }
-    q.options.forEach((opt,i)=>{
-      const btn = document.createElement("button");
-      btn.className = "btn-option w-full my-1";
-      btn.textContent = opt;
-      btn.onclick = ()=>selectOption(i,btn,q.type);
-      $("#options").append(btn);
-    });
-  }
-}
+    function bigBtn(text, color = "indigo") {
+      const b = document.createElement("button");
+      b.textContent = text;
+      b.className = `w-full py-3 mt-4 rounded-lg text-lg font-semibold text-white bg-${color}-600 hover:bg-${color}-700 transition`;
+      return b;
+    }
+    const baseInput = "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
 
-function selectOption(idx,btn,type){
-  if(type==="single"){
-    patientAnswers[step] = idx;
-    advance();
-  }else{ // multi
-    btn.classList.toggle("bg-indigo-600");
-    const arr = patientAnswers[step] || [];
-    const pos = arr.indexOf(idx);
-    if(pos>-1) arr.splice(pos,1); else arr.push(idx);
-    patientAnswers[step] = arr;
-  }
-}
+    function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
 
-$("#nextBtn").onclick = ()=>{
-  const q = patientQuestions[step];
-  if(q.type==="text" || q.type==="number"){
-    const val = $("#inputText").value.trim();
-    if(!val) return alert("Заполните поле");
-    if(q.type==="number" && isNaN(val)) return alert("Введите число");
-    patientAnswers[step] = q.type==="number" ? Number(val) : val;
-  }
-  advance();
-};
+    /* ========= 4. Patient Wizard ========= */
+    async function initPatient() {
+      const answers = [];
+      let step = 0;
+      const patCard = card();
+      root.appendChild(patCard);
+      showStep();
 
-function advance(){
-  step++;
-  if(step < patientQuestions.length){
-    renderPatientStep();
-  }else{
-    finishPatient();
-  }
-}
+      function showStep() {
+        patCard.innerHTML = "";
+        const q = patientQuestions[step];
+        const title = document.createElement("h2");
+        title.className = "text-2xl font-semibold mb-6 text-center";
+        title.textContent = `Шаг ${step + 1} из ${patientQuestions.length}`;
+        patCard.appendChild(title);
 
-async function finishPatient(){
-  const docData = { code, createdAt: Date.now() };
-  patientQuestions.forEach((q,i)=>docData[`p${i+1}`]=patientAnswers[i]);
-  try{
-    const ref = await addDoc(collection(db,"surveys"),docData);
-    docId = ref.id;
-    showDoctorLink();
-  }catch(e){ console.error(e); alert(e.message);}
-}
+        // контейнер вопроса
+        const qWrap = document.createElement("div");
+        qWrap.className = "mb-6";
+        const qLabel = document.createElement("p");
+        qLabel.className = "text-xl font-medium mb-4";
+        qLabel.textContent = q.label;
+        qWrap.appendChild(qLabel);
 
-function showDoctorLink(){
-  $("#quiz").classList.add("hidden");
-  $("#result").classList.remove("hidden");
-  $("#showCode").textContent = code;
-  const link = `${location.origin}${location.pathname}?role=doctor&id=${docId}`;
-  new QRious({element:$("#qr"),value:link,size:200});
-  $("#qrLink").href = link;
-  $("#qrLink").textContent = link;
-}
-
-/*-------------------------------------------------------
-  7.  РЕНДЕР ДОКТОРА
--------------------------------------------------------*/
-async function initDoctor(){
-  if(docId){
-    const snap = await getDoc(doc(db,"surveys",docId));
-    if(!snap.exists()){ return alert("Анкета не найдена"); }
-    patientAnswers = patientQuestions.map((q,i)=>snap.data()[`p${i+1}`]);
-    renderDoctorStep();
-  }else{
-    $("#doctorStart").classList.remove("hidden");
-  }
-}
-
-$("#findByCodeBtn").onclick = async ()=>{
-  const c = $("#doctorCode").value.trim();
-  if(c.length!==4) return alert("Введите 4 цифры");
-  const qSnap = await getDocs(query(collection(db,"surveys"),where("code","==",c)));
-  if(qSnap.empty) return alert("Пациент с таким кодом не найден");
-  const snap = qSnap.docs[0]; docId = snap.id;
-  patientAnswers = patientQuestions.map((q,i)=>snap.data()[`p${i+1}`]);
-  $("#doctorStart").classList.add("hidden");
-  renderDoctorStep();
-};
-
-function renderDoctorStep(){
-  const idx = doctorAnswers.length;
-  if(idx===0){ renderPatientSummary(); }
-  if(idx < doctorQuestions.length){
-    const q = doctorQuestions[idx];
-    $("#dTitle").textContent = q.label;
-    $("#dOptions").innerHTML = "";
-    $("#dHint").classList.add("hidden");
-    $("#dInput").classList.add("hidden");
-    $("#dNext").classList.add("hidden");
-
-    if(q.type==="single" || q.type==="multi"){
-      if(q.type==="multi"){
-        $("#dHint").classList.remove("hidden");
-        $("#dNext").textContent = "Далее (можно несколько)";
-        $("#dNext").classList.remove("hidden");
+        // элементы ввода
+        let multiSelections = [];
+        if (q.type === "text" || q.type === "number") {
+          const inp = document.createElement("input");
+          inp.type = q.type === "number" ? "number" : "text";
+          inp.placeholder = "Ваш ответ";
+          inp.className = baseInput;
+          qWrap.appendChild(inp);
+          const next = bigBtn("Далее");
+          next.onclick = () => {
+            const val = inp.value.trim();
+            if (!val) return alert("Введите значение");
+            if (q.type === "number" && isNaN(val)) return alert("Введите число");
+            answers.push(q.type === "number" ? Number(val) : val);
+            advance();
+          };
+          patCard.append(qWrap, next);
+        }
+        else if (q.type === "single") {
+          const optsWrap = document.createElement("div");
+          q.options.forEach((opt, idx) => {
+            const oBtn = document.createElement("button");
+            oBtn.textContent = opt;
+            oBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50 active:bg-indigo-100";
+            oBtn.onclick = () => {
+              answers.push(idx);
+              advance();
+            };
+            optsWrap.appendChild(oBtn);
+          });
+          qWrap.appendChild(optsWrap);
+          patCard.appendChild(qWrap);
+        }
+        else if (q.type === "multi") {
+          const optsWrap = document.createElement("div");
+          q.options.forEach((opt, idx) => {
+            const oBtn = document.createElement("button");
+            oBtn.textContent = opt;
+            oBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50 active:bg-emerald-100";
+            oBtn.onclick = () => {
+              if (multiSelections.includes(idx)) {
+                multiSelections = multiSelections.filter(i => i !== idx);
+                oBtn.classList.remove("bg-emerald-200");
+              } else {
+                multiSelections.push(idx);
+                oBtn.classList.add("bg-emerald-200");
+              }
+            };
+            optsWrap.appendChild(oBtn);
+          });
+          qWrap.appendChild(optsWrap);
+          const next = bigBtn("Далее");
+          next.onclick = () => {
+            answers.push(multiSelections);
+            advance();
+          };
+          patCard.append(qWrap, next);
+        }
       }
-      q.options.forEach((opt,i)=>{
-        const b=document.createElement("button");
-        b.className="btn-option w-full my-1";
-        b.textContent=opt;
-        b.onclick=()=>selectDoctorOption(i,b,q.type);
-        $("#dOptions").append(b);
-      });
+
+      async function advance() {
+        step++;
+        if (step < patientQuestions.length) {
+          showStep();
+        } else {
+          await finish();
+        }
+      }
+
+      async function finish() {
+        const code = genCode();
+        try {
+          const ref = await addDoc(collection(db, "surveys"), {
+            code,
+            partA: answers,
+            createdAt: Date.now()
+          });
+          showQrAndCode(ref.id, code);
+        } catch (e) {
+          console.error(e);
+          alert("Ошибка сохранения данных: " + e.message);
+        }
+      }
     }
-    if(q.type==="number"){
-      $("#dInput").type="number";
-      $("#dInput").value="";
-      $("#dInput").classList.remove("hidden");
-      $("#dNext").textContent="Далее";
-      $("#dNext").classList.remove("hidden");
-      $("#dInput").focus();
+
+    /* ========= 5. Показ QR и кода ========= */
+    function showQrAndCode(id, code) {
+      root.innerHTML = "";
+      const c = card();
+      const p = document.createElement("p");
+      p.className = "text-center text-xl mb-4";
+      p.innerHTML = `Ваш <span class='font-bold text-5xl block my-2'>${code}</span> <br>Сохраните или запомните номер и передайте врачу!`;
+      const link = `${location.origin}${location.pathname}?role=doctor&id=${id}`;
+      const canvas = document.createElement("canvas");
+      new QRious({ element: canvas, value: link, size: 220 });
+      const a = document.createElement("a");
+      a.href = link;
+      a.textContent = link;
+      a.className = "block text-center text-indigo-600 underline mt-4 break-all";
+      c.append(p, canvas, a);
+      root.appendChild(c);
     }
-  }else{
-    saveDoctor();
-  }
-}
 
-function selectDoctorOption(idx,btn,type){
-  if(type==="single"){
-    doctorAnswers.push(idx);
-    renderDoctorStep();
-  }else{
-    btn.classList.toggle("bg-indigo-600");
-    const arr = doctorAnswers[doctorAnswers.length] || [];
-    const pos = arr.indexOf(idx);
-    if(pos>-1) arr.splice(pos,1); else arr.push(idx);
-    doctorAnswers[doctorAnswers.length] = arr;
-  }
-}
+    /* ========= 6. Doctor ========= */
+    async function initDoctor() {
+      const url = new URL(location.href);
+      const docId = url.searchParams.get("id");
+      if (docId) {
+        loadForm(docId);
+      } else {
+        renderCodeSearch();
+      }
+    }
 
-$("#dNext").onclick = ()=>{
-  const q = doctorQuestions[doctorAnswers.length];
-  if(q.type==="number"){
-    const v=$("#dInput").value.trim();
-    if(!v) return alert("Введите число");
-    doctorAnswers.push(Number(v));
-  }else if(q.type==="multi"){
-    const arr = doctorAnswers[doctorAnswers.length]||[];
-    doctorAnswers.push(arr);
-  }
-  renderDoctorStep();
-};
+    function renderCodeSearch() {
+      const c = card();
+      const lbl = document.createElement("label");
+      lbl.textContent = "Введите код пациента:";
+      lbl.className = "block mb-2 text-lg font-medium";
+      const inp = document.createElement("input");
+      inp.maxLength = 4;
+      inp.className = baseInput;
+      const btn = bigBtn("Найти", "emerald");
+      btn.onclick = async () => {
+        if (inp.value.length !== 4) return alert("Введите 4 цифры");
+        const q = query(collection(db, "surveys"), where("code", "==", inp.value));
+        const snap = await getDocs(q);
+        if (snap.empty) return alert("Анкета не найдена");
+        const docRef = snap.docs[0];
+        location.href = `${location.pathname}?role=doctor&id=${docRef.id}`;
+      };
+      c.append(lbl, inp, btn);
+      root.appendChild(c);
+    }
 
-function renderPatientSummary(){
-  $("#doctorQuiz").classList.remove("hidden");
-  const ul=$("#summary"); ul.innerHTML="";
-  patientQuestions.forEach((q,i)=>{
-    const li=document.createElement("li");
-    li.className="mb-1";
-    const val = Array.isArray(patientAnswers[i])
-      ? patientAnswers[i].map(j=>q.options[j]).join(", ")
-      : (q.options ? q.options[patientAnswers[i]] : patientAnswers[i]);
-    li.textContent=`${q.label}: ${val}`;
-    ul.append(li);
-  });
-}
+    async function loadForm(id) {
+      const dSnap = await getDoc(doc(db, "surveys", id));
+      if (!dSnap.exists()) return alert("Анкета не найдена");
+      const data = dSnap.data();
+      const answersB = [];
+      let step = 0;
+      const dCard = card();
+      root.appendChild(dCard);
+      showStep();
 
-async function saveDoctor(){
-  const upd={finishedAt:Date.now()};
-  doctorQuestions.forEach((q,i)=>upd[`d${i+1}`]=doctorAnswers[i]);
-  upd.score=calculateScore(patientAnswers,doctorAnswers);
-  await updateDoc(doc(db,"surveys",docId),upd);
-  alert(`Сохранено. Итоговый балл: ${upd.score}`);
-  location.search="?role=admin";   // переходим в таблицу
-}
+      function showStep() {
+        dCard.innerHTML = "";
+        if (step === 0) {
+          const h = document.createElement("h2");
+          h.className = "text-xl font-semibold mb-4 text-center";
+          h.textContent = `Код пациента: ${data.code}`;
+          dCard.appendChild(h);
+        }
+        // если все ответы собраны
+        if (step >= doctorQuestions.length) {
+          finish();
+          return;
+        }
+        const q = doctorQuestions[step];
+        const qWrap = document.createElement("div");
+        qWrap.className = "mb-6";
+        const qLabel = document.createElement("p");
+        qLabel.className = "text-xl font-medium mb-4";
+        qLabel.textContent = q.label;
+        qWrap.appendChild(qLabel);
 
-/*-------------------------------------------------------
-  8.  РЕЖИМ ADMIN
--------------------------------------------------------*/
-async function initAdmin(){
-  const snap = await getDocs(collection(db,"surveys"));
-  const rows=[];
-  snap.forEach(d=>{
-    const s=d.data();
-    rows.push({
-      id:d.id,
-      code:s.code,
-      fio:s.p1,
-      age:s.p2,
-      temp:["Нет","Кратк.","Держится"][s.p3]||"",
-      risks:(s.p4||[]).map(j=>patientQuestions[3].options[j]).join(", "),
-      pain:s.p5,
-      cough: doctorQuestions[0].options[s.d1]||"",
-      spo2 : doctorQuestions[1].options[s.d2]||"",
-      therapy:(s.d3||[]).map(j=>doctorQuestions[2].options[j]).join(", "),
-      score:s.score??""
-    });
-  });
-  drawTable(rows);
-}
+        let selections = [];
+        if (q.type === "single") {
+          q.options.forEach((opt, idx) => {
+            const oBtn = document.createElement("button");
+            oBtn.textContent = opt;
+            oBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50 active:bg-indigo-100";
+            oBtn.onclick = () => {
+              answersB.push(idx);
+              step++;
+              showStep();
+            };
+            qWrap.appendChild(oBtn);
+          });
+          dCard.appendChild(qWrap);
+        }
+        else if (q.type === "number") {
+          const inp = document.createElement("input");
+          inp.type = "number";
+          inp.className = baseInput;
+          qWrap.appendChild(inp);
+          const next = bigBtn("Далее");
+          next.onclick = () => {
+            const val = inp.value.trim();
+            if (!val || isNaN(val)) return alert("Введите число");
+            answersB.push(Number(val));
+            step++;
+            showStep();
+          };
+          dCard.append(qWrap, next);
+        }
+        else if (q.type === "multi") {
+          q.options.forEach((opt, idx) => {
+            const mBtn = document.createElement("button");
+            mBtn.textContent = opt;
+            mBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50 active:bg-emerald-100";
+            mBtn.onclick = () => {
+              if (selections.includes(idx)) {
+                selections = selections.filter(i => i !== idx);
+                mBtn.classList.remove("bg-emerald-200");
+              } else {
+                selections.push(idx);
+                mBtn.classList.add("bg-emerald-200");
+              }
+            };
+            qWrap.appendChild(mBtn);
+          });
+          const next = bigBtn("Далее");
+          next.onclick = () => {
+            answersB.push(selections);
+            step++;
+            showStep();
+          };
+          dCard.append(qWrap, next);
+        }
+      }
 
-function drawTable(rows){
-  const tbl=$("#admTable"); tbl.innerHTML="";
-  if(!rows.length){ tbl.textContent="Нет анкет"; return;}
-  const thead=document.createElement("thead");
-  const tr=document.createElement("tr");
-  Object.keys(rows[0]).forEach(h=>{
-    const th=document.createElement("th");
-    th.className="px-2 py-1 border"; th.textContent=h;
-    tr.append(th);
-  });
-  thead.append(tr); tbl.append(thead);
-  const tbody=document.createElement("tbody");
-  rows.forEach(r=>{
-    const tr=document.createElement("tr");
-    Object.values(r).forEach(v=>{
-      const td=document.createElement("td");
-      td.className="px-2 py-1 border"; td.textContent=v;
-      tr.append(td);
-    });
-    tbody.append(tr);
-  });
-  tbl.append(tbody);
-  $("#download").onclick = ()=>downloadExcel(rows);
-}
+      async function finish() {
+        const score = calculateScore(data.partA, answersB);
+        await updateDoc(doc(db, "surveys", id), { partB: answersB, score, finishedAt: Date.now() });
+        dCard.innerHTML = "";
+        const done = document.createElement("p");
+        done.className = "text-2xl font-semibold text-center";
+        done.textContent = `Анкета сохранена. Итоговый балл: ${score}`;
+        dCard.appendChild(done);
+      }
+    }
 
-function downloadExcel(rows){
-  const ws=XLSX.utils.json_to_sheet(rows,{header:Object.keys(rows[0])});
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"surveys");
-  XLSX.writeFile(wb,"surveys.xlsx");
-}
+    /* ========= 7. Admin ========= */
+    async function initAdmin() {
+      try {
+        const snap = await getDocs(collection(db, "surveys"));
+        if (snap.empty) return showMsg("Нет анкет");
+        const rows = [];
+        snap.forEach(d => {
+          const data = d.data();
+          rows.push({
+            code: data.code,
+            fio: data.partA[0],
+            age: data.partA[1],
+            chills: patientQuestions[2].options[data.partA[2]] ?? "",
+            symptoms: data.partA[3].map(i=>patientQuestions[3].options[i]).join(", "),
+            pain: data.partA[4],
+            ausc: data.partB ? doctorQuestions[0].options[data.partB[0]] : "",
+            spo2: data.partB ? data.partB[1] : "",
+            therapy: data.partB ? data.partB[2].map(i=>doctorQuestions[2].options[i]).join(", ") : "",
+            score: data.score ?? ""
+          });
+        });
+        renderTable(rows);
+      } catch(e){
+        console.error(e);
+        showMsg("Ошибка чтения БД");
+      }
+    }
+    function showMsg(text){
+      const c=card(); c.textContent=text; c.classList.add("text-center","text-red-600"); root.appendChild(c);
+    }
+    function renderTable(arr){
+      const c=card();
+      const tbl=document.createElement("table");
+      tbl.className="min-w-full text-sm border";
+      const thead=document.createElement("thead");
+      const headRow=document.createElement("tr");
+      Object.keys(arr[0]).forEach(k=>{const th=document.createElement("th");th.textContent=k;th.className="border px-2 py-1 bg-gray-100";headRow.appendChild(th);});
+      thead.appendChild(headRow);
+      tbl.appendChild(thead);
+      const tbody=document.createElement("tbody");
+      arr.forEach(r=>{const tr=document.createElement("tr");Object.values(r).forEach(v=>{const td=document.createElement("td");td.textContent=v;td.className="border px-2 py-1";tr.appendChild(td);});tbody.appendChild(tr);});
+      tbl.appendChild(tbody);
+      const btn=bigBtn("Скачать Excel","emerald");
+      btn.onclick=()=>{
+        const ws=XLSX.utils.json_to_sheet(arr,{header:Object.keys(arr[0])});
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,"Surveys");
+        XLSX.writeFile(wb,"surveys.xlsx");
+      };
+      c.append(tbl,btn);
+      root.appendChild(c);
+    }
 
-/*-------------------------------------------------------
-  9.  СТАРТ
--------------------------------------------------------*/
-document.addEventListener("DOMContentLoaded",()=>{
-  if(role==="patient"){
-    code=generateCode();
-    $("#quiz").classList.remove("hidden");
-    renderPatientStep();
-  }else if(role==="doctor"){
-    initDoctor();
-  }else if(role==="admin"){
-    $("#admin").classList.remove("hidden");
-    initAdmin();
-  }
-});
-</script>
+    /* ========= 8. Подсчёт баллов ========= */
+    function calculateScore(pA, pB){
+      let s=0;
+      if(pA[2]!=null) s+= (pA[2]+1); // озноб 1-3
+      s+= Number(pA[4]||0);          // боль 0-5
+      if(pB&&pB[0]!=null) s+= pB[0]; // аускультация 0-2
+      if(pB&&pB[1]!=null&&pB[1]<95) s+=2; // SpO2
+      if(pB&&Array.isArray(pB[2])) s+= pB[2].length;
+      return s;
+    }
 
-<!-- QRious для QR-кода -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    /* ========= 9. Роутер ========= */
+    const role=new URL(location.href).searchParams.get("role")||"patient";
+    if(role==="patient") initPatient();
+    if(role==="doctor")  initDoctor();
+    if(role==="admin")   initAdmin();
 
-<style>
-/* крупные кнопки-варианты */
-.btn-option{
- @apply bg-indigo-500/90 hover:bg-indigo-600 text-white py-2 px-4 rounded transition;
-}
-.btn-option.bg-indigo-600{/* selected state */}
-</style>
+  </script>
 </head>
-<body class="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-600 via-fuchsia-600 to-rose-500">
-<div id="container" class="p-4 w-full max-w-md">
-  <!-- ПАЦИЕНТ -->
-  <div id="quiz" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6">
-    <h2 id="title" class="text-xl font-semibold mb-4"></h2>
-    <input id="inputText" class="hidden w-full border rounded mb-4 px-3 py-2" />
-    <div id="options"></div>
-    <p id="hint" class="hidden text-sm text-gray-500 mt-2">Можно выбрать несколько вариантов</p>
-    <button id="nextBtn" class="hidden w-full mt-4 bg-indigo-600 text-white py-2 rounded">
-      Далее
-    </button>
-  </div>
-
-  <!-- QR + код -->
-  <div id="result" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6 text-center">
-    <p class="mb-2 text-lg">Ваш код</p>
-    <p id="showCode" class="text-4xl font-bold mb-4"></p>
-    <canvas id="qr" class="mx-auto"></canvas>
-    <p class="mt-4 text-sm font-medium">Передайте этот код врачу <br>(не закрывайте страницу)</p>
-    <a id="qrLink" class="text-xs break-all text-blue-600 underline" target="_blank"></a>
-  </div>
-
-  <!-- ДОКТОР: ввод кода -->
-  <div id="doctorStart" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6 text-center">
-    <p class="mb-4">Введите 4-значный код пациента</p>
-    <input id="doctorCode" maxlength="4" class="w-full border rounded mb-4 text-center text-xl py-2" />
-    <button id="findByCodeBtn" class="w-full bg-indigo-600 text-white py-2 rounded">Найти</button>
-  </div>
-
-  <!-- ДОКТОР: анкета -->
-  <div id="doctorQuiz" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6">
-    <h3 class="text-lg font-semibold mb-2">Ответы пациента</h3>
-    <ul id="summary" class="mb-4 list-disc pl-5 text-sm"></ul>
-    <h2 id="dTitle" class="text-xl font-semibold mb-4"></h2>
-    <input id="dInput" class="hidden w-full border rounded mb-4 px-3 py-2" />
-    <div id="dOptions"></div>
-    <p id="dHint" class="hidden text-sm text-gray-500 mt-2">Можно выбрать несколько вариантов</p>
-    <button id="dNext" class="hidden w-full mt-4 bg-indigo-600 text-white py-2 rounded">
-      Далее
-    </button>
-  </div>
-
-  <!-- ADMIN -->
-  <div id="admin" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6">
-    <h2 class="text-xl font-semibold mb-4">Все анкеты</h2>
-    <div class="overflow-x-auto max-h-96 mb-4">
-      <table id="admTable" class="text-xs border-collapse w-full"></table>
-    </div>
-    <button id="download" class="w-full bg-indigo-600 text-white py-2 rounded">Скачать Excel</button>
-  </div>
-</div>
-</body>
+<body class="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-4"></body>
 </html>
