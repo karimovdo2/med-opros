@@ -1,308 +1,437 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Мед-опрос</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мед-опрос</title>
+<link rel="icon" href="data:,"><!-- пустая иконка -->
+<!-- Tailwind CDN (можно оставить, размер небольшой) -->
+<script src="https://cdn.tailwindcss.com?plugins=typography"></script>
 
-  <!-- Tailwind CSS через CDN — быстро и красиво -->
-  <script src="https://cdn.tailwindcss.com"></script>
+<!-- Firebase (modular SDK v9) -->
+<script type="module">
+/*-------------------------------------------------------
+  1.  🔧  ВСТАВЬТЕ СВОЙ firebaseConfig
+-------------------------------------------------------*/
+const firebaseConfig = {
+  apiKey: "###",
+  authDomain: "###",
+  projectId: "###",
+  storageBucket: "clinic-quiz.appspot.com",
+  messagingSenderId: "###",
+  appId: "###"
+};
 
-  <!-- QR-код -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+/*-------------------------------------------------------
+  2.  ИНИЦИАЛИЗАЦИЯ
+-------------------------------------------------------*/
+import { initializeApp }  from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
+import {
+  getFirestore, collection, addDoc, doc, getDoc, getDocs, query, where,
+  updateDoc
+} from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
+import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.19.3/+esm";
 
-  <!-- SheetJS для Excel -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
 
-  <style>
-    /* небольшие доработки кнопок-вариантов */
-    .btn-option   { @apply w-full py-3 px-4 mb-3 rounded-lg text-lg font-medium bg-slate-200 hover:bg-indigo-100 transition; }
-    .btn-option.active { @apply bg-indigo-600 text-white hover:bg-indigo-700; }
-    .card         { @apply bg-white/90 backdrop-blur p-6 rounded-2xl shadow-lg mx-auto; max-width: 28rem; }
-  </style>
-</head>
-<body class="min-h-screen flex items-center justify-center bg-gradient-to-br from-violet-700 to-pink-600">
+/*-------------------------------------------------------
+  3.  ДАННЫЕ ВОПРОСОВ
+-------------------------------------------------------*/
+const patientQuestions = [
+  {type:"text",  label:"Фамилия, имя, отчество"},
+  {type:"number",label:"Возраст, лет"},
+  {type:"single",label:"Была ли температура > 38 ℃ за последние сутки?",
+    options:["Нет","Да, кратковременно","Да, держится"]},
+  {type:"multi", label:"Отметьте факторы риска",
+    options:["Курение","Артериальная гипертензия","Сахарный диабет","ХОБЛ"]},
+  {type:"single",label:"Оцените боль по шкале 0–10",
+    options:["0","1","2","3","4","5","6","7","8","9","10"]}
+];
 
-  <div id="app" class="w-full px-4"></div>
+const doctorQuestions = [
+  {type:"single",label:"Есть ли кашель?",
+    options:["Нет","Сухой","Влажный"]},
+  {type:"single",label:"SpO₂ по пульсоксиметру",
+    options:["≥ 95 %","90 – 94 %","< 90 %"]},
+  {type:"multi", label:"Назначено лечение",
+    options:["Антибиотик","Жаропонижающее","Ингаляции","Госпитализация"]}
+];
 
-  <script type="module">
-    /* ---------- Firebase ---------- */
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
-    import {
-      getFirestore, collection, addDoc, doc, getDoc,
-      updateDoc, query, where, getDocs
-    } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
+/*-------------------------------------------------------
+  4.  ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+-------------------------------------------------------*/
+let role = new URLSearchParams(location.search).get("role") || "patient";
+let docId = new URLSearchParams(location.search).get("id");
+let code;                               // 4-значный код
+let step = 0;                           // индекс текущего вопроса
+let patientAnswers = [];
+let doctorAnswers  = [];
 
-    /* TODO: вставьте свой firebaseConfig */
-    const firebaseConfig = {
-      apiKey:   "API_KEY",
-      authDomain: "PROJECT.firebaseapp.com",
-      projectId:  "PROJECT",
-      storageBucket: "PROJECT.appspot.com",
-      messagingSenderId: "XXXX",
-      appId: "XXX"
-    };
+/*-------------------------------------------------------
+  5.  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+-------------------------------------------------------*/
+const $ = sel => document.querySelector(sel);
 
-    const app  = initializeApp(firebaseConfig);
-    const db   = getFirestore(app);
+function generateCode(){
+  return Math.floor(1000 + Math.random()*9000).toString();
+}
 
-    /* ---------- Определяем режим ---------- */
-    const url   = new URL(location.href);
-    const role  = url.searchParams.get("role") || "patient";
-    let   docId = url.searchParams.get("id")   || null;
+// веса для примера
+function calculateScore(pA, dA){
+  let score = 0;
+  // температура
+  if(pA[2] === 1) score += 1;     // кратковременно
+  if(pA[2] === 2) score += 2;     // держится
+  // боль
+  score += parseInt(pA[4] || 0);
+  // кашель
+  if(dA[0] === 1) score += 2;
+  if(dA[0] === 2) score += 4;
+  // SpO2
+  if(dA[1] === 1) score += 2;
+  if(dA[1] === 2) score += 4;
+  // каждое лечение +1
+  if(Array.isArray(dA[2])) score += dA[2].length;
+  return score;
+}
 
-    const $app  = document.getElementById('app');
+/*-------------------------------------------------------
+  6.  РЕНДЕР ПАЦИЕНТА
+-------------------------------------------------------*/
+function renderPatientStep(){
+  const q = patientQuestions[step];
+  $("#title").textContent = q.label;
+  $("#options").innerHTML = "";
+  $("#hint").classList.add("hidden");
+  $("#inputText").classList.add("hidden");
+  $("#nextBtn").classList.add("hidden");
 
-    /* ---------- Вопросы ---------- */
-    const patientQ = [
-      {type:'text',   label:'Введите фамилию, имя и отчество'},
-      {type:'number', label:'Ваш возраст (полных лет)'},
-      {type:'single', label:'Была ли температура выше 38 °C за последние сутки?',
-                      options:['Нет','Да, кратковременно','Да, держится']},
-      {type:'multi',  label:'Отметьте сопутствующие факторы (можно несколько)',
-                      options:['Аллергия','Курение','Диабет','Беременность']},
-      {type:'single', label:'Шкала боли (0 — нет боли, 3 — сильная)', 
-                      options:['0','1','2','3']}
-    ];
+  if(q.type === "text" || q.type === "number"){
+    $("#inputText").type = q.type==="number" ? "number" : "text";
+    $("#inputText").value = "";
+    $("#inputText").classList.remove("hidden");
+    $("#nextBtn").textContent = "Далее";
+    $("#nextBtn").classList.remove("hidden");
+    $("#inputText").focus();
+  }
 
-    const doctorQ = [
-      {type:'single', label:'Тип кашля', options:['Нет','Сухой','Влажный']},
-      {type:'number', label:'SpO₂ по пульсоксиметру'},
-      {type:'multi',  label:'Назначенное лечение (можно несколько)',
-                      options:['Жаропонижающее','Антибиотик','Ингаляции','Госпитализация']}
-    ];
+  if(q.type === "single" || q.type === "multi"){
+    if(q.type==="multi"){
+      $("#hint").classList.remove("hidden");
+      $("#nextBtn").textContent = "Далее (можно несколько)";
+      $("#nextBtn").classList.remove("hidden");
+    }
+    q.options.forEach((opt,i)=>{
+      const btn = document.createElement("button");
+      btn.className = "btn-option w-full my-1";
+      btn.textContent = opt;
+      btn.onclick = ()=>selectOption(i,btn,q.type);
+      $("#options").append(btn);
+    });
+  }
+}
 
-    /* ---------- Служебные переменные ---------- */
-    let pStep = 0, dStep = 0;
-    const pAns = [], dAns = [];
-    let code   = null;   // 4-значный код пациента
+function selectOption(idx,btn,type){
+  if(type==="single"){
+    patientAnswers[step] = idx;
+    advance();
+  }else{ // multi
+    btn.classList.toggle("bg-indigo-600");
+    const arr = patientAnswers[step] || [];
+    const pos = arr.indexOf(idx);
+    if(pos>-1) arr.splice(pos,1); else arr.push(idx);
+    patientAnswers[step] = arr;
+  }
+}
 
-    /* ---------- Рендеры общего назначения ---------- */
-    const html = (h) => { $app.innerHTML = h; };       // заменяем содержимое
-    const btn  = (text, extra='') => `<button class="w-full py-3 mt-4 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-lg font-semibold ${extra}">${text}</button>`;
+$("#nextBtn").onclick = ()=>{
+  const q = patientQuestions[step];
+  if(q.type==="text" || q.type==="number"){
+    const val = $("#inputText").value.trim();
+    if(!val) return alert("Заполните поле");
+    if(q.type==="number" && isNaN(val)) return alert("Введите число");
+    patientAnswers[step] = q.type==="number" ? Number(val) : val;
+  }
+  advance();
+};
 
-    /* ---------- Рендер пациента ---------- */
-    function renderPatientStep() {
-      const q = patientQ[pStep];
-      let inner = `<div class="card">
-        <h2 class="text-xl font-semibold mb-6">${q.label}</h2>`;
+function advance(){
+  step++;
+  if(step < patientQuestions.length){
+    renderPatientStep();
+  }else{
+    finishPatient();
+  }
+}
 
-      if (q.type === 'text' || q.type === 'number') {
-        const type = q.type === 'number' ? 'number' : 'text';
-        inner += `<input id="inp" type="${type}" class="w-full rounded-lg border px-4 py-3 mb-4" ${type==='number'?'inputmode="numeric"':''} />`;
-        inner += btn('Далее');
-      } 
-      else if (q.type === 'single') {
-        q.options.forEach((o,i)=> {
-          inner += `<button class="btn-option" onclick="nextPatientStep(${JSON.stringify(o)})">${o}</button>`;
-        });
+async function finishPatient(){
+  const docData = { code, createdAt: Date.now() };
+  patientQuestions.forEach((q,i)=>docData[`p${i+1}`]=patientAnswers[i]);
+  try{
+    const ref = await addDoc(collection(db,"surveys"),docData);
+    docId = ref.id;
+    showDoctorLink();
+  }catch(e){ console.error(e); alert(e.message);}
+}
+
+function showDoctorLink(){
+  $("#quiz").classList.add("hidden");
+  $("#result").classList.remove("hidden");
+  $("#showCode").textContent = code;
+  const link = `${location.origin}${location.pathname}?role=doctor&id=${docId}`;
+  new QRious({element:$("#qr"),value:link,size:200});
+  $("#qrLink").href = link;
+  $("#qrLink").textContent = link;
+}
+
+/*-------------------------------------------------------
+  7.  РЕНДЕР ДОКТОРА
+-------------------------------------------------------*/
+async function initDoctor(){
+  if(docId){
+    const snap = await getDoc(doc(db,"surveys",docId));
+    if(!snap.exists()){ return alert("Анкета не найдена"); }
+    patientAnswers = patientQuestions.map((q,i)=>snap.data()[`p${i+1}`]);
+    renderDoctorStep();
+  }else{
+    $("#doctorStart").classList.remove("hidden");
+  }
+}
+
+$("#findByCodeBtn").onclick = async ()=>{
+  const c = $("#doctorCode").value.trim();
+  if(c.length!==4) return alert("Введите 4 цифры");
+  const qSnap = await getDocs(query(collection(db,"surveys"),where("code","==",c)));
+  if(qSnap.empty) return alert("Пациент с таким кодом не найден");
+  const snap = qSnap.docs[0]; docId = snap.id;
+  patientAnswers = patientQuestions.map((q,i)=>snap.data()[`p${i+1}`]);
+  $("#doctorStart").classList.add("hidden");
+  renderDoctorStep();
+};
+
+function renderDoctorStep(){
+  const idx = doctorAnswers.length;
+  if(idx===0){ renderPatientSummary(); }
+  if(idx < doctorQuestions.length){
+    const q = doctorQuestions[idx];
+    $("#dTitle").textContent = q.label;
+    $("#dOptions").innerHTML = "";
+    $("#dHint").classList.add("hidden");
+    $("#dInput").classList.add("hidden");
+    $("#dNext").classList.add("hidden");
+
+    if(q.type==="single" || q.type==="multi"){
+      if(q.type==="multi"){
+        $("#dHint").classList.remove("hidden");
+        $("#dNext").textContent = "Далее (можно несколько)";
+        $("#dNext").classList.remove("hidden");
       }
-      else if (q.type === 'multi') {
-        q.options.forEach((o,i)=> {
-          inner += `<button class="btn-option" data-i="${i}" onclick="toggleMulti(this)">${o}</button>`;
-        });
-        inner += btn('Далее (можно выбрать несколько)');
-      }
-
-      inner += `</div>`;
-      html(inner);
-
-      if (q.type === 'text' || q.type === 'number' || q.type === 'multi') {
-        document.querySelector('button:last-of-type').onclick = ()=> {
-          if (q.type === 'multi') {
-            const sel = [...document.querySelectorAll('.btn-option.active')].map(b=>b.textContent);
-            nextPatientStep(sel);
-          } else {
-            let val = document.getElementById('inp').value.trim();
-            if (!val) return alert('Заполните поле');
-            if (q.type==='number' && isNaN(Number(val))) return alert('Введите число');
-            nextPatientStep(q.type==='number'?Number(val):val);
-          }
-        };
-      }
-    }
-    window.toggleMulti = (el)=> el.classList.toggle('active');
-
-    window.nextPatientStep = (answer)=> {
-      pAns[pStep] = answer;
-      pStep++;
-      (pStep < patientQ.length) ? renderPatientStep() : finishPatient();
-    };
-
-    /* ---------- Завершение пациента ---------- */
-    async function finishPatient() {
-      code   = String(Math.floor(1000 + Math.random()*9000));
-      const data = { code, createdAt: Date.now() };
-      patientQ.forEach((q,i)=> data[`p${i+1}`] = pAns[i]);
-
-      let ref;
-      try {
-        ref = await addDoc(collection(db,'surveys'), data);
-      } catch(e){ console.error(e); return alert(e.message); }
-
-      docId = ref.id;
-      showCodeAndQR();
-    }
-
-    function showCodeAndQR() {
-      html(`<div class="card text-center">
-        <p class="mb-2 font-medium">ВАШ КОД</p>
-        <p class="text-4xl font-bold mb-4">${code}</p>
-        <canvas id="qr" class="mx-auto mb-4"></canvas>
-        <p class="text-sm text-red-600 font-medium">Сохраните код и передайте врачу.<br>Не закрывайте страницу!</p>
-      </div>`);
-
-      const link = `${location.origin}${location.pathname}?role=doctor&id=${docId}`;
-      new QRious({ element: document.getElementById('qr'), value: link, size: 200 });
-    }
-
-    /* ---------- Рендер врача ---------- */
-    function renderAskPatientCode() {
-      html(`<div class="card">
-        <h2 class="text-xl font-semibold mb-4">Введите код пациента</h2>
-        <input id="codeInp" class="w-full rounded-lg border px-4 py-3 mb-4" inputmode="numeric" maxlength="4" />
-        ${btn('Найти')}
-      </div>`);
-      document.querySelector('button').onclick = async()=> {
-        const c = document.getElementById('codeInp').value.trim();
-        if (c.length!==4) return alert('Код = 4 цифры');
-        const qSnap = await getDocs(query(collection(db,'surveys'), where('code','==',c)));
-        if (qSnap.empty) return alert('Пациент не найден');
-        docId = qSnap.docs[0].id;
-        loadPatientForDoctor();
-      };
-    }
-
-    async function loadPatientForDoctor() {
-      const snap = await getDoc(doc(db,'surveys',docId));
-      if (!snap.exists()) return alert('Анкета не найдена');
-      const data = snap.data();
-      patientQ.forEach((q,i)=> pAns[i]=data[`p${i+1}`]);
-      renderDoctorStep();
-    }
-
-    function renderDoctorStep() {
-      const q = doctorQ[dStep];
-      let inner = `<div class="card">
-        <h2 class="text-xl font-semibold mb-6">${q.label}</h2>`;
-
-      if (q.type==='number') {
-        inner+=`<input id="dinp" type="number" class="w-full rounded-lg border px-4 py-3 mb-4" />`;
-        inner+=btn('Далее');
-      } 
-      else if (q.type==='single') {
-        q.options.forEach(o=>{
-          inner+=`<button class="btn-option" onclick="nextDoctorStep(${JSON.stringify(o)})">${o}</button>`;
-        });
-      } 
-      else if (q.type==='multi') {
-        q.options.forEach((o,i)=>{
-          inner+=`<button class="btn-option" data-i="${i}" onclick="toggleMulti(this)">${o}</button>`;
-        });
-        inner+=btn('Далее (можно выбрать несколько)');
-      }
-      inner+=`</div>`;
-      html(inner);
-
-      if (q.type==='number' || q.type==='multi') {
-        document.querySelector('button:last-of-type').onclick = ()=>{
-          if (q.type==='number') {
-            const v = document.getElementById('dinp').value.trim();
-            if(v==='') return alert('Введите число');
-            nextDoctorStep(Number(v));
-          } else {
-            const sel=[...document.querySelectorAll('.btn-option.active')].map(b=>b.textContent);
-            nextDoctorStep(sel);
-          }
-        };
-      }
-    }
-
-    window.nextDoctorStep = (ans)=>{
-      dAns[dStep]=ans;
-      dStep++;
-      (dStep<doctorQ.length) ? renderDoctorStep() : saveDoctor();
-    };
-
-    /* ---------- Сохранение врача + баллы ---------- */
-    function calculateScore() {
-      let score=0;
-      // примитивная формула
-      const fever   = pAns[2];                // single
-      const pain    = Number(pAns[4]);        // 0-3
-      const cough   = dAns[0];                // single
-      const spo2    = Number(dAns[1]);        // number
-      const therapy = dAns[2];                // multi
-
-      score += (fever==='Да, держится')?2: (fever==='Да, кратковременно')?1:0;
-      score += pain;
-      score += (cough==='Влажный')?4: (cough==='Сухой')?2:0;
-      score += (spo2<90)?4: (spo2<95)?2:0;
-      score += therapy.length;  // по 1 баллу
-
-      return score;
-    }
-
-    async function saveDoctor() {
-      const upd={ finishedAt: Date.now(), score: calculateScore() };
-      doctorQ.forEach((q,i)=> upd[`d${i+1}`]=dAns[i]);
-      await updateDoc(doc(db,'surveys',docId), upd);
-      html(`<div class="card text-center">
-        <p class="text-2xl font-semibold mb-4">Готово!</p>
-        <p class="text-lg">Итоговый балл: <span class="font-bold">${upd.score}</span></p>
-      </div>`);
-    }
-
-    /* ---------- Admin ---------- */
-    async function initAdmin() {
-      html('<div class="text-white text-lg">Загружаем…</div>');
-      const snap = await getDocs(collection(db,'surveys'));
-      if (snap.empty){ html('<div class="text-white">Данных нет</div>'); return; }
-
-      const rows=[];
-      let table=`<div class="card overflow-auto"><table class="w-full text-sm whitespace-nowrap"><thead><tr>`;
-      const headers=['Код','ФИО','Возраст','Температура','Факторы','Боль','Кашель','SpO₂','Терапия','Баллы'];
-      headers.forEach(h=> table+=`<th class="px-3 py-2 font-medium">${h}</th>`);
-      table+='</tr></thead><tbody>';
-
-      snap.forEach(docSnap=>{
-        const d=docSnap.data();
-        const r={
-          code:d.code,
-          fio:d.p1||'',
-          age:d.p2||'',
-          fever:d.p3||'',
-          risks:(d.p4||[]).join(', '),
-          pain:d.p5,
-          cough:d.d1||'',
-          spo2:d.d2||'',
-          therapy:(d.d3||[]).join(', '),
-          score:d.score??''
-        };
-        rows.push(r);
-        table+='<tr>'+Object.values(r).map(v=>`<td class="px-3 py-1 border-t">${v}</td>`).join('')+'</tr>';
+      q.options.forEach((opt,i)=>{
+        const b=document.createElement("button");
+        b.className="btn-option w-full my-1";
+        b.textContent=opt;
+        b.onclick=()=>selectDoctorOption(i,b,q.type);
+        $("#dOptions").append(b);
       });
-
-      table+=`</tbody></table>
-        <button id="dl" class="mt-4 w-full py-3 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Скачать Excel</button>
-      </div>`;
-      html(table);
-
-      document.getElementById('dl').onclick = ()=> {
-        const ws=XLSX.utils.json_to_sheet(rows,{header:Object.keys(rows[0])});
-        const wb=XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb,ws,'surveys');
-        XLSX.writeFile(wb,'surveys.xlsx');
-      };
     }
-
-    /* ---------- Запуск ---------- */
-    if (role==='patient')           renderPatientStep();
-    else if (role==='doctor') {
-      if (docId) loadPatientForDoctor();
-      else       renderAskPatientCode();
+    if(q.type==="number"){
+      $("#dInput").type="number";
+      $("#dInput").value="";
+      $("#dInput").classList.remove("hidden");
+      $("#dNext").textContent="Далее";
+      $("#dNext").classList.remove("hidden");
+      $("#dInput").focus();
     }
-    else if (role==='admin')        initAdmin();
-  </script>
+  }else{
+    saveDoctor();
+  }
+}
+
+function selectDoctorOption(idx,btn,type){
+  if(type==="single"){
+    doctorAnswers.push(idx);
+    renderDoctorStep();
+  }else{
+    btn.classList.toggle("bg-indigo-600");
+    const arr = doctorAnswers[doctorAnswers.length] || [];
+    const pos = arr.indexOf(idx);
+    if(pos>-1) arr.splice(pos,1); else arr.push(idx);
+    doctorAnswers[doctorAnswers.length] = arr;
+  }
+}
+
+$("#dNext").onclick = ()=>{
+  const q = doctorQuestions[doctorAnswers.length];
+  if(q.type==="number"){
+    const v=$("#dInput").value.trim();
+    if(!v) return alert("Введите число");
+    doctorAnswers.push(Number(v));
+  }else if(q.type==="multi"){
+    const arr = doctorAnswers[doctorAnswers.length]||[];
+    doctorAnswers.push(arr);
+  }
+  renderDoctorStep();
+};
+
+function renderPatientSummary(){
+  $("#doctorQuiz").classList.remove("hidden");
+  const ul=$("#summary"); ul.innerHTML="";
+  patientQuestions.forEach((q,i)=>{
+    const li=document.createElement("li");
+    li.className="mb-1";
+    const val = Array.isArray(patientAnswers[i])
+      ? patientAnswers[i].map(j=>q.options[j]).join(", ")
+      : (q.options ? q.options[patientAnswers[i]] : patientAnswers[i]);
+    li.textContent=`${q.label}: ${val}`;
+    ul.append(li);
+  });
+}
+
+async function saveDoctor(){
+  const upd={finishedAt:Date.now()};
+  doctorQuestions.forEach((q,i)=>upd[`d${i+1}`]=doctorAnswers[i]);
+  upd.score=calculateScore(patientAnswers,doctorAnswers);
+  await updateDoc(doc(db,"surveys",docId),upd);
+  alert(`Сохранено. Итоговый балл: ${upd.score}`);
+  location.search="?role=admin";   // переходим в таблицу
+}
+
+/*-------------------------------------------------------
+  8.  РЕЖИМ ADMIN
+-------------------------------------------------------*/
+async function initAdmin(){
+  const snap = await getDocs(collection(db,"surveys"));
+  const rows=[];
+  snap.forEach(d=>{
+    const s=d.data();
+    rows.push({
+      id:d.id,
+      code:s.code,
+      fio:s.p1,
+      age:s.p2,
+      temp:["Нет","Кратк.","Держится"][s.p3]||"",
+      risks:(s.p4||[]).map(j=>patientQuestions[3].options[j]).join(", "),
+      pain:s.p5,
+      cough: doctorQuestions[0].options[s.d1]||"",
+      spo2 : doctorQuestions[1].options[s.d2]||"",
+      therapy:(s.d3||[]).map(j=>doctorQuestions[2].options[j]).join(", "),
+      score:s.score??""
+    });
+  });
+  drawTable(rows);
+}
+
+function drawTable(rows){
+  const tbl=$("#admTable"); tbl.innerHTML="";
+  if(!rows.length){ tbl.textContent="Нет анкет"; return;}
+  const thead=document.createElement("thead");
+  const tr=document.createElement("tr");
+  Object.keys(rows[0]).forEach(h=>{
+    const th=document.createElement("th");
+    th.className="px-2 py-1 border"; th.textContent=h;
+    tr.append(th);
+  });
+  thead.append(tr); tbl.append(thead);
+  const tbody=document.createElement("tbody");
+  rows.forEach(r=>{
+    const tr=document.createElement("tr");
+    Object.values(r).forEach(v=>{
+      const td=document.createElement("td");
+      td.className="px-2 py-1 border"; td.textContent=v;
+      tr.append(td);
+    });
+    tbody.append(tr);
+  });
+  tbl.append(tbody);
+  $("#download").onclick = ()=>downloadExcel(rows);
+}
+
+function downloadExcel(rows){
+  const ws=XLSX.utils.json_to_sheet(rows,{header:Object.keys(rows[0])});
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"surveys");
+  XLSX.writeFile(wb,"surveys.xlsx");
+}
+
+/*-------------------------------------------------------
+  9.  СТАРТ
+-------------------------------------------------------*/
+document.addEventListener("DOMContentLoaded",()=>{
+  if(role==="patient"){
+    code=generateCode();
+    $("#quiz").classList.remove("hidden");
+    renderPatientStep();
+  }else if(role==="doctor"){
+    initDoctor();
+  }else if(role==="admin"){
+    $("#admin").classList.remove("hidden");
+    initAdmin();
+  }
+});
+</script>
+
+<!-- QRious для QR-кода -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+
+<style>
+/* крупные кнопки-варианты */
+.btn-option{
+ @apply bg-indigo-500/90 hover:bg-indigo-600 text-white py-2 px-4 rounded transition;
+}
+.btn-option.bg-indigo-600{/* selected state */}
+</style>
+</head>
+<body class="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-600 via-fuchsia-600 to-rose-500">
+<div id="container" class="p-4 w-full max-w-md">
+  <!-- ПАЦИЕНТ -->
+  <div id="quiz" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6">
+    <h2 id="title" class="text-xl font-semibold mb-4"></h2>
+    <input id="inputText" class="hidden w-full border rounded mb-4 px-3 py-2" />
+    <div id="options"></div>
+    <p id="hint" class="hidden text-sm text-gray-500 mt-2">Можно выбрать несколько вариантов</p>
+    <button id="nextBtn" class="hidden w-full mt-4 bg-indigo-600 text-white py-2 rounded">
+      Далее
+    </button>
+  </div>
+
+  <!-- QR + код -->
+  <div id="result" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6 text-center">
+    <p class="mb-2 text-lg">Ваш код</p>
+    <p id="showCode" class="text-4xl font-bold mb-4"></p>
+    <canvas id="qr" class="mx-auto"></canvas>
+    <p class="mt-4 text-sm font-medium">Передайте этот код врачу <br>(не закрывайте страницу)</p>
+    <a id="qrLink" class="text-xs break-all text-blue-600 underline" target="_blank"></a>
+  </div>
+
+  <!-- ДОКТОР: ввод кода -->
+  <div id="doctorStart" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6 text-center">
+    <p class="mb-4">Введите 4-значный код пациента</p>
+    <input id="doctorCode" maxlength="4" class="w-full border rounded mb-4 text-center text-xl py-2" />
+    <button id="findByCodeBtn" class="w-full bg-indigo-600 text-white py-2 rounded">Найти</button>
+  </div>
+
+  <!-- ДОКТОР: анкета -->
+  <div id="doctorQuiz" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6">
+    <h3 class="text-lg font-semibold mb-2">Ответы пациента</h3>
+    <ul id="summary" class="mb-4 list-disc pl-5 text-sm"></ul>
+    <h2 id="dTitle" class="text-xl font-semibold mb-4"></h2>
+    <input id="dInput" class="hidden w-full border rounded mb-4 px-3 py-2" />
+    <div id="dOptions"></div>
+    <p id="dHint" class="hidden text-sm text-gray-500 mt-2">Можно выбрать несколько вариантов</p>
+    <button id="dNext" class="hidden w-full mt-4 bg-indigo-600 text-white py-2 rounded">
+      Далее
+    </button>
+  </div>
+
+  <!-- ADMIN -->
+  <div id="admin" class="hidden bg-white/90 backdrop-blur-md rounded-xl p-6">
+    <h2 class="text-xl font-semibold mb-4">Все анкеты</h2>
+    <div class="overflow-x-auto max-h-96 mb-4">
+      <table id="admTable" class="text-xs border-collapse w-full"></table>
+    </div>
+    <button id="download" class="w-full bg-indigo-600 text-white py-2 rounded">Скачать Excel</button>
+  </div>
+</div>
 </body>
 </html>
