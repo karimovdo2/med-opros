@@ -176,104 +176,110 @@ box.append(qWrap, next);
       async function finish(){const upd={};doctorQuestions.forEach((_,i)=>upd[`d${i+1}`]=answers[i]);upd.score=calcTotal({...docData,...upd});upd.finishedAt=Date.now();await updateDoc(doc(db,"surveys",id),upd);box.innerHTML="";const done=document.createElement("p");done.className="text-2xl font-semibold text-center";done.textContent=`Сохранено. Итог: ${upd.score}`;box.appendChild(done);}  }
 
     /* ========= 7. Admin ========= */
-async function initAdmin(){
-  try{
+/* ========= 7. Admin ========= */
+async function initAdmin () {
+  try {
     const snap = await getDocs(collection(db, "surveys"));
-    if (snap.empty){ showMsg("Нет анкет"); return; }
+    if (snap.empty) { showMsg("Нет анкет"); return; }
 
     const rows = [];
     snap.forEach(d => rows.push(flat(d.data())));
     renderTable(rows);
-  }catch(e){
+  } catch (e) {
     console.error(e);
     showMsg("Ошибка чтения БД");
   }
 }
 
-/*--- вспомогательные ---*/
-function flat(v){
-  /* вспомогалка безопасного доступа к option-массивам */
+/* ---------- helpers --------- */
+
+/* «расплющиваем» документ Firestore в строку таблицы */
+function flat (v) {
+
+  /* безопасно берём подпись варианта ответа */
   const pick = (arr, idx) => (
     idx != null && Array.isArray(arr) && idx >= 0 && idx < arr.length
-      ? arr[idx].label ?? arr[idx]
+      ? (arr[idx]?.label ?? arr[idx] ?? "")
       : ""
   );
 
   return {
+    /* --- пациент --- */
     code   : v.code   ?? "",
     fio    : v.p1     ?? "",
     age    : v.p2     ?? "",
     weight : v.p3     ?? "",
 
-    chills   : pick(patientQuestions[3].options, v.p4),
+    chills   : pick(patientQuestions[3]?.options, v.p4),
 
     symptoms : Array.isArray(v.p5)
-                 ? v.p5.map(i => pick(patientQuestions[4].options, i)).join(", ")
+                 ? v.p5.map(i => pick(patientQuestions[4]?.options, i)).join(", ")
                  : "",
 
-    pain      : v.p6   ?? "",
-    energy    : v.p7   ?? "",
-    anxiety   : v.p8   ?? "",
-    mood      : v.p9   ?? "",
-    expect    : v.p10  ?? "",
+    pain      : v.p6  ?? "",
+    energy    : v.p7  ?? "",
+    anxiety   : v.p8  ?? "",
+    mood      : v.p9  ?? "",
+    expect    : v.p10 ?? "",
 
+    /* --- врач --- */
     spo2    : v.d1 ?? "",
-    auscult : pick(doctorQuestions[1].options, v.d2),
+    auscult : pick(doctorQuestions[1]?.options, v.d2),
     rr      : v.d3 ?? "",
-
     state   : v.d4 ?? "",
 
     therapy : Array.isArray(v.d5)
-                ? v.d5.map(i => pick(doctorQuestions[4].options, i)).join(", ")
+                ? v.d5.map(i => pick(doctorQuestions[4]?.options, i)).join(", ")
                 : "",
 
     score   : v.score ?? ""
   };
 }
 
-
-function showMsg(t){
+/* сообщение об ошибке / пустой выборки */
+function showMsg (text) {
   const c = card();
-  c.textContent = t;
-  c.classList.add("text-center","text-red-600");
+  c.textContent = text;
+  c.classList.add("text-center", "text-red-600");
   root.appendChild(c);
 }
 
-function renderTable(arr){
-  const c = card();
+/* рендер таблицы + экспорт в Excel */
+function renderTable (arr) {
+  const c   = card();
 
-  /*-- таблица --*/
+  /* таблица */
   const tbl = document.createElement("table");
   tbl.className = "min-w-full text-xs md:text-sm border";
 
   const thead = document.createElement("thead");
-  const hr = document.createElement("tr");
-  Object.keys(arr[0]).forEach(k=>{
+  const hr    = document.createElement("tr");
+  Object.keys(arr[0]).forEach(k => {
     const th = document.createElement("th");
     th.textContent = k;
-    th.className = "border px-2 py-1 bg-gray-100 sticky top-0";
+    th.className   = "border px-2 py-1 bg-gray-100 sticky top-0";
     hr.appendChild(th);
   });
   thead.appendChild(hr);
   tbl.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  arr.forEach(r=>{
+  arr.forEach(r => {
     const tr = document.createElement("tr");
-    Object.values(r).forEach(v=>{
+    Object.values(r).forEach(v => {
       const td = document.createElement("td");
       td.textContent = v;
-      td.className = "border px-2 py-1";
+      td.className   = "border px-2 py-1";
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
 
-  /*-- excel-кнопка --*/
-  const btn = makeBtn("Скачать Excel","emerald");
-  btn.onclick = ()=>{
-    const ws = XLSX.utils.json_to_sheet(arr,{header:Object.keys(arr[0])});
+  /* кнопка Excel */
+  const btn = makeBtn("Скачать Excel", "emerald");
+  btn.onclick = () => {
+    const ws = XLSX.utils.json_to_sheet(arr, { header: Object.keys(arr[0]) });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Surveys");
     XLSX.writeFile(wb, "surveys.xlsx");
