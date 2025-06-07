@@ -4,12 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Клинический опросник</title>
-    <!-- Tailwind CSS CDN -->
+    <!-- Tailwind CSS CDN (для демо достаточно) -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS ( XLSX ) для экспорта в Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   </head>
   <body class="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-4 selection:bg-yellow-300/60">
     <!-- Основная карточка приложения -->
-    <div id="app" class="w-full max-w-xl bg-white/90 backdrop-blur rounded-2xl shadow-xl p-6 sm:p-8">
+    <div id="app" class="w-full max-w-3xl bg-white/90 backdrop-blur rounded-2xl shadow-xl p-6 sm:p-8 overflow-x-auto">
       <!-- Контент будет вставлен скриптом -->
     </div>
 
@@ -26,7 +28,8 @@
         addDoc,
         doc,
         getDoc,
-        updateDoc
+        updateDoc,
+        getDocs
       } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
 
       // 👉 Ваши реальные ключи проекта
@@ -34,7 +37,7 @@
         apiKey: "AIzaSyBZSy3d5NUeTua1ye9IZolmy_Lkd-Vn_hQ",
         authDomain: "clinic-quiz.firebaseapp.com",
         projectId: "clinic-quiz",
-        storageBucket: "clinic-quiz.appspot.app", // ⚠️ проверьте spelling: должно быть <project>.appspot.com
+        storageBucket: "clinic-quiz.appspot.com", // исправлено
         messagingSenderId: "712528458476",
         appId: "1:712528458476:web:4de4d047d03c4b9e926bc9"
       };
@@ -68,6 +71,10 @@
       // ======================= Утилиты ==============================
       const $ = (sel) => document.querySelector(sel);
       const appEl = $("#app");
+
+      function idxToValue(arr, qArr) {
+        return arr.map((idx, i) => qArr[i].options[idx]);
+      }
 
       function scoreByIndex(arr) {
         return arr.reduce((sum, idx) => sum + idx, 0); // простая сумма индексов
@@ -112,7 +119,7 @@
       // ======================= Отправка пациента ===================
       async function submitPatient(partA) {
         try {
-          const ref = await addDoc(collection(db, "patients"), {
+          const ref = await addDoc(collection(db, "surveys"), {
             partA,
             createdAt: Date.now(),
           });
@@ -137,7 +144,7 @@
       // ======================= Рендер врача ========================
       async function initDoctor(id) {
         try {
-          const snap = await getDoc(doc(db, "patients", id));
+          const snap = await getDoc(doc(db, "surveys", id));
           if (!snap.exists()) {
             appEl.innerHTML = `<p class="text-center text-red-600">Анкета не найдена</p>`;
             return;
@@ -191,7 +198,7 @@
       async function submitDoctor(id, partA, partB) {
         const score = scoreByIndex([...partA, ...partB]);
         try {
-          await updateDoc(doc(db, "patients", id), {
+          await updateDoc(doc(db, "surveys", id), {
             partB,
             score,
             finishedAt: Date.now(),
@@ -204,6 +211,64 @@
         }
       }
 
+      // ======================= Рендер администратора ==============
+      async function initAdmin() {
+        appEl.innerHTML = `<p class="text-center">Загрузка…</p>`;
+        try {
+          const qSnap = await getDocs(collection(db, "surveys"));
+          const rows = [];
+          qSnap.forEach((d) => {
+            const data = d.data();
+            rows.push({
+              id: d.id,
+              date: new Date(data.createdAt).toLocaleString(),
+              patient: idxToValue(data.partA || [], questionsPatient).join(" | "),
+              doctor: idxToValue(data.partB || [], questionsDoctor).join(" | "),
+              score: data.score ?? "–",
+            });
+          });
+
+          renderAdminTable(rows);
+        } catch (e) {
+          console.error(e);
+          appEl.innerHTML = `<p class="text-center text-red-600">Ошибка загрузки данных</p>`;
+        }
+      }
+
+      function renderAdminTable(rows) {
+        const header = ["ID", "Дата", "Ответы пациента", "Ответы врача", "Баллы"];
+        const thead = header.map((h) => `<th class="px-3 py-2 border-b">${h}</th>`).join("");
+        const tbody = rows
+          .map((r) => `
+            <tr>
+              <td class="px-3 py-2 border-b whitespace-nowrap text-xs">${r.id}</td>
+              <td class="px-3 py-2 border-b whitespace-nowrap">${r.date}</td>
+              <td class="px-3 py-2 border-b text-sm">${r.patient}</td>
+              <td class="px-3 py-2 border-b text-sm">${r.doctor}</td>
+              <td class="px-3 py-2 border-b text-center font-medium">${r.score}</td>
+            </tr>`)
+          .join("");
+
+        appEl.innerHTML = `
+          <h1 class="text-2xl font-semibold mb-4 text-center">Админ‑панель</h1>
+          <div class="overflow-x-auto mb-4 max-h-[60vh]">
+            <table class="min-w-full text-left text-gray-700 text-sm">
+              <thead class="bg-gray-100 sticky top-0">${thead}</thead>
+              <tbody>${tbody}</tbody>
+            </table>
+          </div>
+          <button id="dlExcel" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-xl text-lg transition">Скачать Excel</button>`;
+
+        $("#dlExcel").onclick = () => downloadExcel(rows);
+      }
+
+      function downloadExcel(rows) {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, "Surveys");
+        XLSX.writeFile(wb, "surveys.xlsx");
+      }
+
       // ======================= Запуск =============================
       document.addEventListener("DOMContentLoaded", () => {
         const params = new URLSearchParams(location.search);
@@ -212,6 +277,8 @@
 
         if (role === "doctor" && id) {
           initDoctor(id);
+        } else if (role === "admin") {
+          initAdmin();
         } else {
           renderPatientForm();
         }
