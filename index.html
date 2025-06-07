@@ -148,7 +148,7 @@ function renderDoctorSearch(){
         {sliderObj = makeSlider(q);
         qWrap.appendChild(sliderObj.wrap);
         const next = makeBtn("Далее");
-        next.onclick = () => { answers.push(sliderObj.get()); step++; render(); };
+        next.onclick = () => { answers.push(sliderObj.val()); step++; render(); };
         box.append(qWrap, next);
 
             }
@@ -164,7 +164,7 @@ function renderDoctorSearch(){
         else if(q.type==="emoji"){const char=q.emojiSet==="sad"?"😞":"😊";emojiObj=makeEmoji(char,0.8);
         qWrap.appendChild(emojiObj.wrap);
 const next = makeBtn("Далее");
-next.onclick = () => { answers.push(emojiObj.get()); step++; render(); };
+next.onclick = () => { answers.push(emojiObj.val()); step++; render(); };
 box.append(qWrap, next);
 
         }
