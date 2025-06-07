@@ -34,7 +34,7 @@
         apiKey: "AIzaSyBZSy3d5NUeTua1ye9IZolmy_Lkd-Vn_hQ",
         authDomain: "clinic-quiz.firebaseapp.com",
         projectId: "clinic-quiz",
-        storageBucket: "clinic-quiz.firebasestorage.app", // ⚠️ проверьте spelling: должно быть <project>.appspot.com
+        storageBucket: "clinic-quiz.appspot.app", // ⚠️ проверьте spelling: должно быть <project>.appspot.com
         messagingSenderId: "712528458476",
         appId: "1:712528458476:web:4de4d047d03c4b9e926bc9"
       };
@@ -112,7 +112,7 @@
       // ======================= Отправка пациента ===================
       async function submitPatient(partA) {
         try {
-          const ref = await addDoc(collection(db, "surveys"), {
+          const ref = await addDoc(collection(db, "patients"), {
             partA,
             createdAt: Date.now(),
           });
@@ -137,7 +137,7 @@
       // ======================= Рендер врача ========================
       async function initDoctor(id) {
         try {
-          const snap = await getDoc(doc(db, "surveys", id));
+          const snap = await getDoc(doc(db, "patients", id));
           if (!snap.exists()) {
             appEl.innerHTML = `<p class="text-center text-red-600">Анкета не найдена</p>`;
             return;
@@ -191,7 +191,7 @@
       async function submitDoctor(id, partA, partB) {
         const score = scoreByIndex([...partA, ...partB]);
         try {
-          await updateDoc(doc(db, "surveys", id), {
+          await updateDoc(doc(db, "patients", id), {
             partB,
             score,
             finishedAt: Date.now(),
