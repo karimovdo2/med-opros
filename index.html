@@ -7,7 +7,7 @@
   <!-- Tailwind (демо) -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- SheetJS -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.19.3/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <!-- QRious -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
   <style>
@@ -109,7 +109,7 @@
       const link=`${location.origin}${location.pathname}?role=doctor&id=${id}`;
       const canvas=document.createElement("canvas");new QRious({element:canvas,value:link,size:220});
       const a=document.createElement("a");a.href=link;a.textContent=link;a.className="block text-center text-indigo-600 underline mt-4 break-all";
-      c.append(txt,canvas,a);root.appendChild(c);}   
+      c.append(txt,canvas,a);root.appendChild(c);}    
 
     /* ========= 6. Doctor ========= */
     async function initDoctor(){
