@@ -10,16 +10,22 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.19.3/xlsx.full.min.js"></script>
   <!-- QRious -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
-  <!-- Firebase v9 (модульный) -->
+  <!-- Firebase v9 -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
     import {
       getFirestore,
-      collection, addDoc, doc, getDoc, updateDoc,
-      getDocs, query, where
+      collection,
+      addDoc,
+      doc,
+      getDoc,
+      updateDoc,
+      getDocs,
+      query,
+      where
     } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
 
-    /* ========= 1. Firebase ========= */
+    /* ========= 1. Подключаем Firebase ========= */
     // 👉 Замените на ваш конфиг
     const firebaseConfig = {
       apiKey: "YOUR_API_KEY",
@@ -32,10 +38,10 @@
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
 
-    /* ========= 2. Вопросы ========= */
+    /* ========= 2. Описание вопросов ========= */
     const patientQuestions = [
       { type: "text",   label: "Фамилия Имя Отчество" },
-      { type: "number", label: "Возраст (полных лет)" },
+      { type: "slider", label: "Возраст (0‑99 лет)", min: 0, max: 99 },
       { type: "single", label: "Был ли озноб за последние сутки?", options: ["Нет", "Небольшой", "Сильный"] },
       { type: "multi",  label: "Отметьте симптомы", options: ["Кашель", "Насморк", "Головная боль", "Боль в горле"] },
       { type: "single", label: "Оцените боль (0 – 5)", options: ["0", "1", "2", "3", "4", "5"] }
@@ -61,11 +67,12 @@
       return b;
     }
     const baseInput = "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
+
     function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
 
     /* ========= 4. Patient Wizard ========= */
     async function initPatient() {
-      const answers = []; // сохраняем в массив, но запишем как объект
+      const answers = [];
       let step = 0;
       const patCard = card();
       root.appendChild(patCard);
@@ -87,18 +94,58 @@
         qWrap.appendChild(qLabel);
 
         let multiSelections = [];
-        if (q.type === "text" || q.type === "number") {
+        if (q.type === "text") {
           const inp = document.createElement("input");
-          inp.type = q.type === "number" ? "number" : "text";
-          inp.placeholder = "Ваш ответ";
+          inp.type = "text";
+          inp.placeholder = "Введите";
           inp.className = baseInput;
           qWrap.appendChild(inp);
           const next = bigBtn("Далее");
           next.onclick = () => {
             const val = inp.value.trim();
             if (!val) return alert("Введите значение");
-            if (q.type === "number" && isNaN(val)) return alert("Введите число");
-            answers.push(q.type === "number" ? Number(val) : val);
+            answers.push(val);
+            advance();
+          };
+          patCard.append(qWrap, next);
+        }
+        else if (q.type === "slider") {
+          // Центрированное число
+          const valueSpan = document.createElement("span");
+          valueSpan.className = "block text-4xl font-bold text-center mb-4";
+          valueSpan.textContent = "25";
+
+          const range = document.createElement("input");
+          range.type = "range";
+          range.min = q.min;
+          range.max = q.max;
+          range.value = 25;
+          range.className = "w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer";
+          range.oninput = () => {
+            valueSpan.textContent = range.value;
+            numInput.value = range.value;
+          };
+
+          const numInput = document.createElement("input");
+          numInput.type = "number";
+          numInput.min = q.min;
+          numInput.max = q.max;
+          numInput.value = 25;
+          numInput.className = baseInput + " mt-4";
+          numInput.oninput = () => {
+            let v = Number(numInput.value);
+            if (isNaN(v)) v = 0;
+            if (v < q.min) v = q.min;
+            if (v > q.max) v = q.max;
+            numInput.value = v;
+            range.value = v;
+            valueSpan.textContent = v;
+          };
+
+          qWrap.append(valueSpan, range, numInput);
+          const next = bigBtn("Далее");
+          next.onclick = () => {
+            answers.push(Number(range.value));
             advance();
           };
           patCard.append(qWrap, next);
@@ -119,6 +166,11 @@
           patCard.appendChild(qWrap);
         }
         else if (q.type === "multi") {
+          const note = document.createElement("p");
+          note.className = "text-sm text-gray-600 mb-2";
+          note.textContent = "Можно выбрать несколько вариантов";
+          qWrap.appendChild(note);
+
           const optsWrap = document.createElement("div");
           q.options.forEach((opt, idx) => {
             const oBtn = document.createElement("button");
@@ -145,42 +197,45 @@
         }
       }
 
-      function advance() {
+      async function advance() {
         step++;
         if (step < patientQuestions.length) {
           showStep();
         } else {
-          finish();
+          await finish();
         }
       }
 
       async function finish() {
         const code = genCode();
-        // формируем объект без вложенных массивов
-        const docData = { code, createdAt: Date.now() };
-        patientQuestions.forEach((_, i) => docData[`p${i+1}`] = answers[i]);
         try {
+          const docData = { code, createdAt: Date.now() };
+          patientQuestions.forEach((q, i) => docData[`p${i+1}`] = answers[i]);
           const ref = await addDoc(collection(db, "surveys"), docData);
           showQrAndCode(ref.id, code);
-        } catch(e) {
+        } catch (e) {
           console.error(e);
-          alert("Ошибка сохранения: "+e.message);
+          alert("Ошибка сохранения данных: " + e.message);
         }
       }
     }
 
-    /* ========= 5. QR + код ========= */
-    function showQrAndCode(id, code){
-      root.innerHTML="";
-      const c=card();
-      const p=document.createElement("p");
-      p.className="text-center text-xl mb-4";
-      p.innerHTML=`Ваш <span class='font-bold text-5xl block my-2'>${code}</span><br>Сохраните номер и передайте врачу!`;
-      const link=`${location.origin}${location.pathname}?role=doctor&id=${id}`;
-      const canvas=document.createElement("canvas");
-      new QRious({element:canvas,value:link,size:220});
-      const a=document.createElement("a"); a.href=link; a.textContent=link; a.className="block text-center text-indigo-600 underline mt-4 break-all";
-      c.append(p,canvas,a); root.appendChild(c);
+    /* ========= 5. Показ QR и кода ========= */
+    function showQrAndCode(id, code) {
+      root.innerHTML = "";
+      const c = card();
+      const p = document.createElement("p");
+      p.className = "text-center text-xl mb-4";
+      p.innerHTML = `Ваш <span class='font-bold text-5xl block my-2'>${code}</span> <br>Сохраните или запомните номер и передайте врачу!`;
+      const link = `${location.origin}${location.pathname}?role=doctor&id=${id}`;
+      const canvas = document.createElement("canvas");
+      new QRious({ element: canvas, value: link, size: 220 });
+      const a = document.createElement("a");
+      a.href = link;
+      a.textContent = link;
+      a.className = "block text-center text-indigo-600 underline mt-4 break-all";
+      c.append(p, canvas, a);
+      root.appendChild(c);
     }
 
     /* ========= 6. Doctor ========= */
