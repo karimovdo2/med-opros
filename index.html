@@ -15,18 +15,11 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
     import {
       getFirestore,
-      collection,
-      addDoc,
-      doc,
-      getDoc,
-      updateDoc,
-      getDocs,
-      query,
-      where
+      collection, addDoc, doc, getDoc, updateDoc,
+      getDocs, query, where
     } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
 
-    /* ========= 1. Подключаем Firebase ========= */
-    // 👉 Замените на ваш конфиг
+    /* ========= 1. Firebase ========= */
     const firebaseConfig = {
       apiKey: "YOUR_API_KEY",
       authDomain: "clinic-quiz.firebaseapp.com",
@@ -38,13 +31,13 @@
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
 
-    /* ========= 2. Описание вопросов ========= */
+    /* ========= 2. Вопросы ========= */
     const patientQuestions = [
       { type: "text",   label: "Фамилия Имя Отчество" },
-      { type: "slider", label: "Возраст (0‑99 лет)", min: 0, max: 99 },
+      { type: "age",    label: "Возраст (0‑99 лет)", min: 0, max: 99, start: 25 },
       { type: "single", label: "Был ли озноб за последние сутки?", options: ["Нет", "Небольшой", "Сильный"] },
       { type: "multi",  label: "Отметьте симптомы", options: ["Кашель", "Насморк", "Головная боль", "Боль в горле"] },
-      { type: "single", label: "Оцените боль (0 – 5)", options: ["0", "1", "2", "3", "4", "5"] }
+      { type: "pain",   label: "Оцените боль (1 – 5)" }
     ];
 
     const doctorQuestions = [
@@ -55,169 +48,72 @@
 
     /* ========= 3. Утилиты ========= */
     const root = document.body;
-    function card() {
-      const d = document.createElement("div");
-      d.className = "max-w-lg w-full bg-white/80 backdrop-blur rounded-xl p-6 mx-auto mt-12 shadow-xl";
-      return d;
-    }
-    function bigBtn(text, color = "indigo") {
-      const b = document.createElement("button");
-      b.textContent = text;
-      b.className = `w-full py-3 mt-4 rounded-lg text-lg font-semibold text-white bg-${color}-600 hover:bg-${color}-700 transition`;
-      return b;
-    }
     const baseInput = "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
-
-    function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
+    function card(){const d=document.createElement("div");d.className="max-w-lg w-full bg-white/80 backdrop-blur rounded-xl p-6 mx-auto mt-12 shadow-xl";return d;}
+    function bigBtn(t,col="indigo"){const b=document.createElement("button");b.textContent=t;b.className=`w-full py-3 mt-4 rounded-lg text-lg font-semibold text-white bg-${col}-600 hover:bg-${col}-700 transition`;return b;}
+    function genCode(){return String(Math.floor(1000+Math.random()*9000));}
 
     /* ========= 4. Patient Wizard ========= */
-    async function initPatient() {
-      const answers = [];
-      let step = 0;
-      const patCard = card();
-      root.appendChild(patCard);
-      showStep();
+    async function initPatient(){
+      const answers=[];let step=0;const patCard=card();root.appendChild(patCard);showStep();
 
-      function showStep() {
-        patCard.innerHTML = "";
-        const q = patientQuestions[step];
-        const title = document.createElement("h2");
-        title.className = "text-2xl font-semibold mb-6 text-center";
-        title.textContent = `Шаг ${step + 1} из ${patientQuestions.length}`;
-        patCard.appendChild(title);
+      function showStep(){
+        patCard.innerHTML="";
+        const q=patientQuestions[step];
+        const title=document.createElement("h2");title.className="text-2xl font-semibold mb-6 text-center";title.textContent=`Шаг ${step+1} из ${patientQuestions.length}`;patCard.appendChild(title);
 
-        const qWrap = document.createElement("div");
-        qWrap.className = "mb-6";
-        const qLabel = document.createElement("p");
-        qLabel.className = "text-xl font-medium mb-4";
-        qLabel.textContent = q.label;
-        qWrap.appendChild(qLabel);
+        const qWrap=document.createElement("div");qWrap.className="mb-6";
+        const qLabel=document.createElement("p");qLabel.className="text-xl font-medium mb-4";qLabel.textContent=q.label;qWrap.appendChild(qLabel);
 
-        let multiSelections = [];
-        if (q.type === "text") {
-          const inp = document.createElement("input");
-          inp.type = "text";
-          inp.placeholder = "Введите";
-          inp.className = baseInput;
-          qWrap.appendChild(inp);
-          const next = bigBtn("Далее");
-          next.onclick = () => {
-            const val = inp.value.trim();
-            if (!val) return alert("Введите значение");
-            answers.push(val);
-            advance();
-          };
-          patCard.append(qWrap, next);
+        let selections=[];
+        if(q.type==="text"){
+          const inp=document.createElement("input");inp.type="text";inp.placeholder="Введите";inp.className=baseInput;qWrap.appendChild(inp);
+          const next=bigBtn("Далее");next.onclick=()=>{const v=inp.value.trim();if(!v)return alert("Введите значение");answers.push(v);advance();};patCard.append(qWrap,next);
         }
-        else if (q.type === "slider") {
-          // Центрированное число
-          const valueSpan = document.createElement("span");
-          valueSpan.className = "block text-4xl font-bold text-center mb-4";
-          valueSpan.textContent = "25";
-
-          const range = document.createElement("input");
-          range.type = "range";
-          range.min = q.min;
-          range.max = q.max;
-          range.value = 25;
-          range.className = "w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer";
-          range.oninput = () => {
-            valueSpan.textContent = range.value;
-            numInput.value = range.value;
-          };
-
-          const numInput = document.createElement("input");
-          numInput.type = "number";
-          numInput.min = q.min;
-          numInput.max = q.max;
-          numInput.value = 25;
-          numInput.className = baseInput + " mt-4";
-          numInput.oninput = () => {
-            let v = Number(numInput.value);
-            if (isNaN(v)) v = 0;
-            if (v < q.min) v = q.min;
-            if (v > q.max) v = q.max;
-            numInput.value = v;
-            range.value = v;
-            valueSpan.textContent = v;
-          };
-
-          qWrap.append(valueSpan, range, numInput);
-          const next = bigBtn("Далее");
-          next.onclick = () => {
-            answers.push(Number(range.value));
-            advance();
-          };
-          patCard.append(qWrap, next);
+        else if(q.type==="age"){
+          const numInput=document.createElement("input");numInput.type="number";numInput.min=q.min;numInput.max=q.max;numInput.value=q.start;numInput.className=baseInput;
+          const valueSpan=document.createElement("div");valueSpan.className="flex items-center justify-center gap-2 my-4 text-4xl font-bold";
+          const digit=document.createElement("span");digit.textContent=q.start;
+          valueSpan.append(digit);
+          const range=document.createElement("input");range.type="range";range.min=q.min;range.max=q.max;range.value=q.start;range.className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer";
+          const sync=v=>{digit.textContent=v;numInput.value=v;range.value=v;};
+          numInput.oninput=()=>{let v=Math.max(q.min,Math.min(q.max,Number(numInput.value)||q.min));sync(v);};
+          range.oninput=()=>{sync(range.value);};
+          qWrap.append(numInput,valueSpan,range);
+          const next=bigBtn("Далее");next.onclick=()=>{answers.push(Number(range.value));advance();};patCard.append(qWrap,next);
         }
-        else if (q.type === "single") {
-          const optsWrap = document.createElement("div");
-          q.options.forEach((opt, idx) => {
-            const oBtn = document.createElement("button");
-            oBtn.textContent = opt;
-            oBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50 active:bg-indigo-100";
-            oBtn.onclick = () => {
-              answers.push(idx);
-              advance();
-            };
-            optsWrap.appendChild(oBtn);
-          });
-          qWrap.appendChild(optsWrap);
-          patCard.appendChild(qWrap);
+        else if(q.type==="single"){
+          const opts=document.createElement("div");q.options.forEach((opt,i)=>{const b=document.createElement("button");b.textContent=opt;b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50 active:bg-indigo-100";b.onclick=()=>{answers.push(i);advance();};opts.appendChild(b);});qWrap.appendChild(opts);patCard.appendChild(qWrap);
         }
-        else if (q.type === "multi") {
-          const note = document.createElement("p");
-          note.className = "text-sm text-gray-600 mb-2";
-          note.textContent = "Можно выбрать несколько вариантов";
-          qWrap.appendChild(note);
-
-          const optsWrap = document.createElement("div");
-          q.options.forEach((opt, idx) => {
-            const oBtn = document.createElement("button");
-            oBtn.textContent = opt;
-            oBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50 active:bg-emerald-100";
-            oBtn.onclick = () => {
-              if (multiSelections.includes(idx)) {
-                multiSelections = multiSelections.filter(i => i !== idx);
-                oBtn.classList.remove("bg-emerald-200");
-              } else {
-                multiSelections.push(idx);
-                oBtn.classList.add("bg-emerald-200");
-              }
-            };
-            optsWrap.appendChild(oBtn);
-          });
-          qWrap.appendChild(optsWrap);
-          const next = bigBtn("Далее (можно выбрать несколько)");
-          next.onclick = () => {
-            answers.push(multiSelections);
-            advance();
-          };
-          patCard.append(qWrap, next);
+        else if(q.type==="multi"){
+          const note=document.createElement("p");note.className="text-sm text-gray-600 mb-2";note.textContent="Можно выбрать несколько вариантов";qWrap.appendChild(note);
+          const opts=document.createElement("div");q.options.forEach((opt,i)=>{const b=document.createElement("button");b.textContent=opt;b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50 active:bg-emerald-100";b.onclick=()=>{if(selections.includes(i)){selections=selections.filter(x=>x!==i);b.classList.remove("bg-emerald-200");}else{selections.push(i);b.classList.add("bg-emerald-200");}};opts.appendChild(b);});qWrap.appendChild(opts);
+          const next=bigBtn("Далее (можно выбрать несколько)");next.onclick=()=>{answers.push(selections);advance();};patCard.append(qWrap,next);
+        }
+        else if(q.type==="pain"){
+          const numInput=document.createElement("input");numInput.type="number";numInput.min=1;numInput.max=5;numInput.value=3;numInput.className=baseInput;
+          const valueSpan=document.createElement("div");valueSpan.className="flex items-center justify-center gap-3 my-4";
+          const digit=document.createElement("span");digit.className="text-4xl font-bold";digit.textContent=3;
+          const flame=document.createElement("span");flame.textContent="🔥";flame.style.fontSize="2rem";
+          valueSpan.append(digit,flame);
+          const range=document.createElement("input");range.type="range";range.min=1;range.max=5;range.value=3;range.className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer";
+          const sync=v=>{digit.textContent=v;flame.style.fontSize=`${1+v*0.6}rem`;numInput.value=v;range.value=v;};
+          numInput.oninput=()=>{let v=Math.max(1,Math.min(5,Number(numInput.value)||1));sync(v);};
+          range.oninput=()=>{sync(range.value);};
+          qWrap.append(numInput,valueSpan,range);
+          const next=bigBtn("Далее");next.onclick=()=>{answers.push(Number(range.value));advance();};patCard.append(qWrap,next);
         }
       }
 
-      async function advance() {
-        step++;
-        if (step < patientQuestions.length) {
-          showStep();
-        } else {
-          await finish();
-        }
-      }
+      function advance(){step++;if(step<patientQuestions.length)showStep();else finish();}
 
-      async function finish() {
-        const code = genCode();
-        try {
-          const docData = { code, createdAt: Date.now() };
-          patientQuestions.forEach((q, i) => docData[`p${i+1}`] = answers[i]);
-          const ref = await addDoc(collection(db, "surveys"), docData);
-          showQrAndCode(ref.id, code);
-        } catch (e) {
-          console.error(e);
-          alert("Ошибка сохранения данных: " + e.message);
-        }
-      }
+      async function finish(){
+        const code=genCode();
+        try{
+          const data={code,createdAt:Date.now()};patientQuestions.forEach((q,i)=>data[`p${i+1}`]=answers[i]);
+          const ref=await addDoc(collection(db,"surveys"),data);
+          showQrAndCode(ref.id,code);
+        }catch(e){console.error(e);alert("Ошибка сохранения: "+e.message);} }
     }
 
     /* ========= 5. Показ QR и кода ========= */
