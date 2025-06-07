@@ -192,26 +192,45 @@ async function initAdmin(){
 
 /*--- вспомогательные ---*/
 function flat(v){
+  /* вспомогалка безопасного доступа к option-массивам */
+  const pick = (arr, idx) => (
+    idx != null && Array.isArray(arr) && idx >= 0 && idx < arr.length
+      ? arr[idx].label ?? arr[idx]
+      : ""
+  );
+
   return {
-    code      : v.code ?? "",
-    fio       : v.p1   ?? "",
-    age       : v.p2   ?? "",
-    weight    : v.p3   ?? "",
-    chills    : v.p4 != null ? patientQuestions[3].options[v.p4].label : "",
-    symptoms  : Array.isArray(v.p5) ? v.p5.map(i=>patientQuestions[4].options[i].label).join(", ") : "",
+    code   : v.code   ?? "",
+    fio    : v.p1     ?? "",
+    age    : v.p2     ?? "",
+    weight : v.p3     ?? "",
+
+    chills   : pick(patientQuestions[3].options, v.p4),
+
+    symptoms : Array.isArray(v.p5)
+                 ? v.p5.map(i => pick(patientQuestions[4].options, i)).join(", ")
+                 : "",
+
     pain      : v.p6   ?? "",
     energy    : v.p7   ?? "",
     anxiety   : v.p8   ?? "",
     mood      : v.p9   ?? "",
-    expectation : v.p10 ?? "",
-    spo2      : v.d1  ?? "",
-    auscult   : v.d2 != null ? doctorQuestions[1].options[v.d2].label : "",
-    rr        : v.d3  ?? "",
-    state     : v.d4  ?? "",
-    therapy   : Array.isArray(v.d5) ? v.d5.map(i=>doctorQuestions[4].options[i].label).join(", ") : "",
-    score     : v.score ?? ""
+    expect    : v.p10  ?? "",
+
+    spo2    : v.d1 ?? "",
+    auscult : pick(doctorQuestions[1].options, v.d2),
+    rr      : v.d3 ?? "",
+
+    state   : v.d4 ?? "",
+
+    therapy : Array.isArray(v.d5)
+                ? v.d5.map(i => pick(doctorQuestions[4].options, i)).join(", ")
+                : "",
+
+    score   : v.score ?? ""
   };
 }
+
 
 function showMsg(t){
   const c = card();
