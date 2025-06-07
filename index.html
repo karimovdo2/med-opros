@@ -40,6 +40,25 @@ const patientQuestions=[
   {type:"text",   label:"Ожидания от визита"}
 ];
 
+/**************** Doctor questions ****************/
+const doctorQuestions = [
+  { type:"slider", label:"SpO₂ (%)", min:0, max:100, start:97, unit:" %", scoreFormula:v=>v<95?2:0 },
+  { type:"single", label:"Аускультация лёгких", options:[
+      { label:"Везикулярное", score:0 },
+      { label:"Ослабленное",  score:1 },
+      { label:"Хрипы",        score:2 }
+  ]},
+  { type:"slider", label:"Частота дыхания (в мин)", min:10, max:40, start:16, unit:" в/мин" },
+  { type:"emoji",  label:"Общее состояние пациента", emojiSet:"sad" },
+  { type:"multi",  label:"Назначенное лечение", options:[
+      { label:"Антибиотик",      score:1 },
+      { label:"Жаропонижающее",  score:1 },
+      { label:"Ингаляции",       score:1 },
+      { label:"Госпитализация",  score:2 }
+  ]}
+];
+
+
 /**************** DOM helpers ****************/
 const root=document.body;
 const baseInput="w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
@@ -90,7 +109,26 @@ async function initPatient(){const ans=[];let step=0;const box=card();root.appen
     /* ========= 6. Doctor ========= */
     async function initDoctor(){const u=new URL(location.href);const id=u.searchParams.get("id");if(id){renderDoctor(id);}else{renderDoctorSearch();}}
 
-    function renderDoctorSearch(){const c=card();const lbl=qLabel("Введите код пациента:");const inp=document.createElement("input");inp.maxLength=4;inp.className=baseInput;const btn=bigBtn("Найти","emerald");btn.onclick=async()=>{if(inp.value.length!==4)return alert("Код из 4 цифр");const q=query(collection(db,"surveys"),where("code","==",inp.value));const snap=await getDocs(q);if(snap.empty)return alert("Анкета не найдена");location.href=`${location.pathname}?role=doctor&id=${snap.docs[0].id}`;};c.append(lbl,inp,btn);root.appendChild(c);}
+function renderDoctorSearch(){
+    const c = card();
+    c.append(label("Введите код пациента:"));
+
+    const inp = document.createElement("input");
+    inp.maxLength = 4;
+    inp.className = baseInput;
+
+    const btn = makeBtn("Найти","emerald");
+    btn.onclick = async () => {
+        if (inp.value.length !== 4) return alert("Код из 4 цифр");
+        const q  = query(collection(db,"surveys"), where("code","==", inp.value));
+        const qs = await getDocs(q);
+        if (qs.empty) return alert("Анкета не найдена");
+        location.href = `${location.pathname}?role=doctor&id=${qs.docs[0].id}`;
+    };
+
+    c.append(inp, btn);
+    root.appendChild(c);
+    }
 
     async function renderDoctor(id){const dSnap=await getDoc(doc(db,"surveys",id));if(!dSnap.exists())return alert("Анкета не найдена");const docData=dSnap.data();const answers=[];let step=0;const box=card();root.appendChild(box);render();
       function render(){box.innerHTML="";if(step===0){const h=qLabel(`Код пациента: ${docData.code}`);h.classList.add("text-center");box.appendChild(h);}if(step>=doctorQuestions.length){finish();return;}const q=doctorQuestions[step];const qWrap=document.createElement("div");qWrap.className="mb-6";qWrap.appendChild(qLabel(q.label));let sliderObj,emojiObj,selections=[];
