@@ -4,28 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Клинический опросник</title>
-  <!-- Tailwind CSS CDN (для демо) -->
+  <!-- Tailwind CSS CDN (демо) -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- SheetJS (Excel) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.19.3/xlsx.full.min.js"></script>
   <!-- QRious -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
-  <!-- Firebase v9 -->
+  <!-- Firebase v9 (модульный) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-app.js";
     import {
       getFirestore,
-      collection,
-      addDoc,
-      doc,
-      getDoc,
-      updateDoc,
-      getDocs,
-      query,
-      where
+      collection, addDoc, doc, getDoc, updateDoc,
+      getDocs, query, where
     } from "https://www.gstatic.com/firebasejs/9.11.0/firebase-firestore.js";
 
-    /* ========= 1. Подключаем Firebase ========= */
+    /* ========= 1. Firebase ========= */
     // 👉 Замените на ваш конфиг
     const firebaseConfig = {
       apiKey: "YOUR_API_KEY",
@@ -38,7 +32,7 @@
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
 
-    /* ========= 2. Описание вопросов ========= */
+    /* ========= 2. Вопросы ========= */
     const patientQuestions = [
       { type: "text",   label: "Фамилия Имя Отчество" },
       { type: "number", label: "Возраст (полных лет)" },
@@ -67,12 +61,11 @@
       return b;
     }
     const baseInput = "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
-
     function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
 
     /* ========= 4. Patient Wizard ========= */
     async function initPatient() {
-      const answers = [];
+      const answers = []; // сохраняем в массив, но запишем как объект
       let step = 0;
       const patCard = card();
       root.appendChild(patCard);
@@ -86,7 +79,6 @@
         title.textContent = `Шаг ${step + 1} из ${patientQuestions.length}`;
         patCard.appendChild(title);
 
-        // контейнер вопроса
         const qWrap = document.createElement("div");
         qWrap.className = "mb-6";
         const qLabel = document.createElement("p");
@@ -94,7 +86,6 @@
         qLabel.textContent = q.label;
         qWrap.appendChild(qLabel);
 
-        // элементы ввода
         let multiSelections = [];
         if (q.type === "text" || q.type === "number") {
           const inp = document.createElement("input");
@@ -145,7 +136,7 @@
             optsWrap.appendChild(oBtn);
           });
           qWrap.appendChild(optsWrap);
-          const next = bigBtn("Далее");
+          const next = bigBtn("Далее (можно выбрать несколько)");
           next.onclick = () => {
             answers.push(multiSelections);
             advance();
@@ -154,248 +145,156 @@
         }
       }
 
-      async function advance() {
+      function advance() {
         step++;
         if (step < patientQuestions.length) {
           showStep();
         } else {
-          await finish();
+          finish();
         }
       }
 
       async function finish() {
         const code = genCode();
+        // формируем объект без вложенных массивов
+        const docData = { code, createdAt: Date.now() };
+        patientQuestions.forEach((_, i) => docData[`p${i+1}`] = answers[i]);
         try {
-          const ref = await addDoc(collection(db, "surveys"), {
-            code,
-            partA: answers,
-            createdAt: Date.now()
-          });
+          const ref = await addDoc(collection(db, "surveys"), docData);
           showQrAndCode(ref.id, code);
-        } catch (e) {
+        } catch(e) {
           console.error(e);
-          alert("Ошибка сохранения данных: " + e.message);
+          alert("Ошибка сохранения: "+e.message);
         }
       }
     }
 
-    /* ========= 5. Показ QR и кода ========= */
-    function showQrAndCode(id, code) {
-      root.innerHTML = "";
-      const c = card();
-      const p = document.createElement("p");
-      p.className = "text-center text-xl mb-4";
-      p.innerHTML = `Ваш <span class='font-bold text-5xl block my-2'>${code}</span> <br>Сохраните или запомните номер и передайте врачу!`;
-      const link = `${location.origin}${location.pathname}?role=doctor&id=${id}`;
-      const canvas = document.createElement("canvas");
-      new QRious({ element: canvas, value: link, size: 220 });
-      const a = document.createElement("a");
-      a.href = link;
-      a.textContent = link;
-      a.className = "block text-center text-indigo-600 underline mt-4 break-all";
-      c.append(p, canvas, a);
-      root.appendChild(c);
+    /* ========= 5. QR + код ========= */
+    function showQrAndCode(id, code){
+      root.innerHTML="";
+      const c=card();
+      const p=document.createElement("p");
+      p.className="text-center text-xl mb-4";
+      p.innerHTML=`Ваш <span class='font-bold text-5xl block my-2'>${code}</span><br>Сохраните номер и передайте врачу!`;
+      const link=`${location.origin}${location.pathname}?role=doctor&id=${id}`;
+      const canvas=document.createElement("canvas");
+      new QRious({element:canvas,value:link,size:220});
+      const a=document.createElement("a"); a.href=link; a.textContent=link; a.className="block text-center text-indigo-600 underline mt-4 break-all";
+      c.append(p,canvas,a); root.appendChild(c);
     }
 
     /* ========= 6. Doctor ========= */
-    async function initDoctor() {
-      const url = new URL(location.href);
-      const docId = url.searchParams.get("id");
-      if (docId) {
-        loadForm(docId);
-      } else {
-        renderCodeSearch();
-      }
+    async function initDoctor(){
+      const url=new URL(location.href);
+      const docId=url.searchParams.get("id");
+      if(docId) loadForm(docId); else renderCodeSearch();
     }
-
-    function renderCodeSearch() {
-      const c = card();
-      const lbl = document.createElement("label");
-      lbl.textContent = "Введите код пациента:";
-      lbl.className = "block mb-2 text-lg font-medium";
-      const inp = document.createElement("input");
-      inp.maxLength = 4;
-      inp.className = baseInput;
-      const btn = bigBtn("Найти", "emerald");
-      btn.onclick = async () => {
-        if (inp.value.length !== 4) return alert("Введите 4 цифры");
-        const q = query(collection(db, "surveys"), where("code", "==", inp.value));
-        const snap = await getDocs(q);
-        if (snap.empty) return alert("Анкета не найдена");
-        const docRef = snap.docs[0];
-        location.href = `${location.pathname}?role=doctor&id=${docRef.id}`;
+    function renderCodeSearch(){
+      const c=card();
+      const lbl=document.createElement("label"); lbl.textContent="Введите код пациента:"; lbl.className="block mb-2 text-lg font-medium";
+      const inp=document.createElement("input"); inp.maxLength=4; inp.className=baseInput;
+      const btn=bigBtn("Найти","emerald");
+      btn.onclick=async()=>{
+        if(inp.value.length!==4) return alert("Введите 4 цифры");
+        const q=query(collection(db,"surveys"),where("code","==",inp.value));
+        const snap=await getDocs(q);
+        if(snap.empty) return alert("Анкета не найдена");
+        location.href=`${location.pathname}?role=doctor&id=${snap.docs[0].id}`;
       };
-      c.append(lbl, inp, btn);
-      root.appendChild(c);
+      c.append(lbl,inp,btn); root.appendChild(c);
     }
-
-    async function loadForm(id) {
-      const dSnap = await getDoc(doc(db, "surveys", id));
-      if (!dSnap.exists()) return alert("Анкета не найдена");
-      const data = dSnap.data();
-      const answersB = [];
-      let step = 0;
-      const dCard = card();
-      root.appendChild(dCard);
+    async function loadForm(id){
+      const dSnap=await getDoc(doc(db,"surveys",id));
+      if(!dSnap.exists()) return alert("Анкета не найдена");
+      const data=dSnap.data();
+      const answersB=[]; let step=0; const dCard=card(); root.appendChild(dCard);
       showStep();
-
-      function showStep() {
-        dCard.innerHTML = "";
-        if (step === 0) {
-          const h = document.createElement("h2");
-          h.className = "text-xl font-semibold mb-4 text-center";
-          h.textContent = `Код пациента: ${data.code}`;
-          dCard.appendChild(h);
+      function showStep(){
+        dCard.innerHTML="";
+        if(step===0){
+          const h=document.createElement("h2"); h.className="text-xl font-semibold mb-4 text-center"; h.textContent=`Код пациента: ${data.code}`; dCard.appendChild(h);
         }
-        // если все ответы собраны
-        if (step >= doctorQuestions.length) {
-          finish();
-          return;
-        }
-        const q = doctorQuestions[step];
-        const qWrap = document.createElement("div");
-        qWrap.className = "mb-6";
-        const qLabel = document.createElement("p");
-        qLabel.className = "text-xl font-medium mb-4";
-        qLabel.textContent = q.label;
-        qWrap.appendChild(qLabel);
-
-        let selections = [];
-        if (q.type === "single") {
-          q.options.forEach((opt, idx) => {
-            const oBtn = document.createElement("button");
-            oBtn.textContent = opt;
-            oBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50 active:bg-indigo-100";
-            oBtn.onclick = () => {
-              answersB.push(idx);
-              step++;
-              showStep();
-            };
+        if(step>=doctorQuestions.length){ finish(); return; }
+        const q=doctorQuestions[step];
+        const qWrap=document.createElement("div"); qWrap.className="mb-6";
+        const qLabel=document.createElement("p"); qLabel.className="text-xl font-medium mb-4"; qLabel.textContent=q.label; qWrap.appendChild(qLabel);
+        let selections=[];
+        if(q.type==="single"){
+          q.options.forEach((opt,idx)=>{
+            const oBtn=document.createElement("button"); oBtn.textContent=opt; oBtn.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50 active:bg-indigo-100";
+            oBtn.onclick=()=>{ answersB.push(idx); step++; showStep(); };
             qWrap.appendChild(oBtn);
           });
           dCard.appendChild(qWrap);
-        }
-        else if (q.type === "number") {
-          const inp = document.createElement("input");
-          inp.type = "number";
-          inp.className = baseInput;
-          qWrap.appendChild(inp);
-          const next = bigBtn("Далее");
-          next.onclick = () => {
-            const val = inp.value.trim();
-            if (!val || isNaN(val)) return alert("Введите число");
-            answersB.push(Number(val));
-            step++;
-            showStep();
-          };
-          dCard.append(qWrap, next);
-        }
-        else if (q.type === "multi") {
-          q.options.forEach((opt, idx) => {
-            const mBtn = document.createElement("button");
-            mBtn.textContent = opt;
-            mBtn.className = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50 active:bg-emerald-100";
-            mBtn.onclick = () => {
-              if (selections.includes(idx)) {
-                selections = selections.filter(i => i !== idx);
-                mBtn.classList.remove("bg-emerald-200");
-              } else {
-                selections.push(idx);
-                mBtn.classList.add("bg-emerald-200");
-              }
-            };
+        } else if(q.type==="number"){
+          const inp=document.createElement("input"); inp.type="number"; inp.className=baseInput; qWrap.appendChild(inp);
+          const next=bigBtn("Далее"); next.onclick=()=>{ if(!inp.value||isNaN(inp.value)) return alert("Введите число"); answersB.push(Number(inp.value)); step++; showStep(); };
+          dCard.append(qWrap,next);
+        } else if(q.type==="multi"){
+          q.options.forEach((opt,idx)=>{
+            const mBtn=document.createElement("button"); mBtn.textContent=opt; mBtn.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50 active:bg-emerald-100";
+            mBtn.onclick=()=>{ if(selections.includes(idx)){ selections=selections.filter(i=>i!==idx); mBtn.classList.remove("bg-emerald-200"); } else { selections.push(idx); mBtn.classList.add("bg-emerald-200"); } };
             qWrap.appendChild(mBtn);
           });
-          const next = bigBtn("Далее");
-          next.onclick = () => {
-            answersB.push(selections);
-            step++;
-            showStep();
-          };
-          dCard.append(qWrap, next);
+          const next=bigBtn("Далее (можно выбрать несколько)"); next.onclick=()=>{ answersB.push(selections); step++; showStep(); };
+          dCard.append(qWrap,next);
         }
       }
-
-      async function finish() {
-        const score = calculateScore(data.partA, answersB);
-        await updateDoc(doc(db, "surveys", id), { partB: answersB, score, finishedAt: Date.now() });
-        dCard.innerHTML = "";
-        const done = document.createElement("p");
-        done.className = "text-2xl font-semibold text-center";
-        done.textContent = `Анкета сохранена. Итоговый балл: ${score}`;
-        dCard.appendChild(done);
+      async function finish(){
+        const upd={}; doctorQuestions.forEach((_,i)=>upd[`d${i+1}`]=answersB[i]);
+        upd.score=calculateScore(data, upd); upd.finishedAt=Date.now();
+        await updateDoc(doc(db,"surveys",id),upd);
+        dCard.innerHTML=""; const done=document.createElement("p"); done.className="text-2xl font-semibold text-center"; done.textContent=`Анкета сохранена. Балл: ${upd.score}`; dCard.appendChild(done);
       }
     }
 
     /* ========= 7. Admin ========= */
-    async function initAdmin() {
-      try {
-        const snap = await getDocs(collection(db, "surveys"));
-        if (snap.empty) return showMsg("Нет анкет");
-        const rows = [];
-        snap.forEach(d => {
-          const data = d.data();
-          rows.push({
-            code: data.code,
-            fio: data.partA[0],
-            age: data.partA[1],
-            chills: patientQuestions[2].options[data.partA[2]] ?? "",
-            symptoms: data.partA[3].map(i=>patientQuestions[3].options[i]).join(", "),
-            pain: data.partA[4],
-            ausc: data.partB ? doctorQuestions[0].options[data.partB[0]] : "",
-            spo2: data.partB ? data.partB[1] : "",
-            therapy: data.partB ? data.partB[2].map(i=>doctorQuestions[2].options[i]).join(", ") : "",
-            score: data.score ?? ""
-          });
-        });
+    async function initAdmin(){
+      try{
+        const snap=await getDocs(collection(db,"surveys")); if(snap.empty) return showMsg("Нет анкет");
+        const rows=[]; snap.forEach(d=>{ const v=d.data(); rows.push(flat(v)); });
         renderTable(rows);
-      } catch(e){
-        console.error(e);
-        showMsg("Ошибка чтения БД");
-      }
+      }catch(e){ console.error(e); showMsg("Ошибка чтения БД"); }
     }
-    function showMsg(text){
-      const c=card(); c.textContent=text; c.classList.add("text-center","text-red-600"); root.appendChild(c);
-    }
-    function renderTable(arr){
-      const c=card();
-      const tbl=document.createElement("table");
-      tbl.className="min-w-full text-sm border";
-      const thead=document.createElement("thead");
-      const headRow=document.createElement("tr");
-      Object.keys(arr[0]).forEach(k=>{const th=document.createElement("th");th.textContent=k;th.className="border px-2 py-1 bg-gray-100";headRow.appendChild(th);});
-      thead.appendChild(headRow);
-      tbl.appendChild(thead);
-      const tbody=document.createElement("tbody");
-      arr.forEach(r=>{const tr=document.createElement("tr");Object.values(r).forEach(v=>{const td=document.createElement("td");td.textContent=v;td.className="border px-2 py-1";tr.appendChild(td);});tbody.appendChild(tr);});
-      tbl.appendChild(tbody);
-      const btn=bigBtn("Скачать Excel","emerald");
-      btn.onclick=()=>{
-        const ws=XLSX.utils.json_to_sheet(arr,{header:Object.keys(arr[0])});
-        const wb=XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb,ws,"Surveys");
-        XLSX.writeFile(wb,"surveys.xlsx");
+    function flat(v){
+      return {
+        code:v.code||"",
+        fio:v.p1||"",
+        age:v.p2||"",
+        chills:v.p3!=null?patientQuestions[2].options[v.p3]:"",
+        symptoms:Array.isArray(v.p4)? v.p4.map(i=>patientQuestions[3].options[i]).join(", ") : "",
+        pain:v.p5||"",
+        ausc:v.d1!=null?doctorQuestions[0].options[v.d1]:"",
+        spo2:v.d2||"",
+        therapy:Array.isArray(v.d3)? v.d3.map(i=>doctorQuestions[2].options[i]).join(", ") : "",
+        score:v.score||""
       };
-      c.append(tbl,btn);
-      root.appendChild(c);
+    }
+    function showMsg(t){ const c=card(); c.textContent=t; c.classList.add("text-center","text-red-600"); root.appendChild(c);}    
+    function renderTable(arr){
+      const c=card(); const tbl=document.createElement("table"); tbl.className="min-w-full text-sm border";
+      const head=document.createElement("thead"); const hr=document.createElement("tr"); Object.keys(arr[0]).forEach(k=>{ const th=document.createElement("th"); th.className="border px-2 py-1 bg-gray-100"; th.textContent=k; hr.appendChild(th); }); head.appendChild(hr); tbl.appendChild(head);
+      const tb=document.createElement("tbody"); arr.forEach(r=>{ const tr=document.createElement("tr"); Object.values(r).forEach(v=>{ const td=document.createElement("td"); td.className="border px-2 py-1"; td.textContent=v; tr.appendChild(td); }); tb.appendChild(tr); }); tbl.appendChild(tb);
+      const btn=bigBtn("Скачать Excel","emerald"); btn.onclick=()=>{ const ws=XLSX.utils.json_to_sheet(arr,{header:Object.keys(arr[0])}); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Surveys"); XLSX.writeFile(wb,"surveys.xlsx"); };
+      c.append(tbl,btn); root.appendChild(c);
     }
 
-    /* ========= 8. Подсчёт баллов ========= */
-    function calculateScore(pA, pB){
+    /* ========= 8. Баллы ========= */
+    function calculateScore(p, d){
       let s=0;
-      if(pA[2]!=null) s+= (pA[2]+1); // озноб 1-3
-      s+= Number(pA[4]||0);          // боль 0-5
-      if(pB&&pB[0]!=null) s+= pB[0]; // аускультация 0-2
-      if(pB&&pB[1]!=null&&pB[1]<95) s+=2; // SpO2
-      if(pB&&Array.isArray(pB[2])) s+= pB[2].length;
+      if(p.p3!=null) s+= (p.p3+1);
+      s+= Number(p.p5||0);
+      if(d.d1!=null) s+= d.d1;
+      if(d.d2!=null && d.d2<95) s+=2;
+      if(Array.isArray(d.d3)) s+= d.d3.length;
       return s;
     }
 
     /* ========= 9. Роутер ========= */
     const role=new URL(location.href).searchParams.get("role")||"patient";
     if(role==="patient") initPatient();
-    if(role==="doctor")  initDoctor();
-    if(role==="admin")   initAdmin();
+    if(role==="doctor") initDoctor();
+    if(role==="admin") initAdmin();
 
   </script>
 </head>
