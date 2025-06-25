@@ -307,13 +307,97 @@ async function initPatient(){
 
   function advance(){ step++; step<patientQuestions.length ? render() : finish(); }
 
+
   async function finish(){
-    const code=genCode();
-    const data={code,createdAt:Date.now()};
-    patientQuestions.forEach((_,i)=>data[`p${i+1}`]=ans[i]);
-    const ref=await addDoc(collection(db,"surveys"),data);
-    showQr(code,ref.id);
-  }
+    const code = genCode();
+    const data = { code, createdAt: Date.now() };
+
+    // Сохраняем все ответы пациента
+    patientQuestions.forEach((_, i) => data[`p${i + 1}`] = ans[i]);
+
+    // Врачебные ответы и вычисления
+    const upd = {};
+    doctorQuestions.forEach((_, i) => upd[`d${i + 1}`] = answers[i]);
+
+    // Добавляем результаты вычислений
+    const weight = docData.p8;  // Вес пациента (кг)
+    const heightM = docData.p9 / 100; // Рост пациента (м)
+    const bmi = (weight / (heightM * heightM)).toFixed(1); // Индекс массы тела
+    const bmiInfo = bmi < 18.5 ? "Недостаточный вес" :
+        bmi < 25 ? "Нормальный вес" :
+            bmi < 30 ? "Избыточный вес" : "Ожирение — фактор риска";
+
+    const chol = upd.d5; // Холестерин
+    const cholInfo = chol < 5.2 ? "Норма" :
+        chol < 8 ? "Погранично повышен" : "Высокий — фактор риска";
+
+    const sbp = upd.d3, dbp = upd.d4; // АД (систолическое и диастолическое)
+    const bpInfo = (sbp < 120 && dbp < 80) ? "Оптимальное давление" :
+        (sbp < 130 && dbp < 85) ? "Нормальное давление" :
+            (sbp < 140 || dbp < 90) ? "Пограничная гипертензия" : "Гипертензия";
+
+    const smokeIdx = docData.p10;
+    const smokeText = patientQuestions[9].options[smokeIdx].label +
+        (smokeIdx > 0 ? " — фактор риска" : "");
+
+    const chronicIdx = [11, 12, 13, 14, 15];
+    const chronicNames = ["Диабет 1", "Диабет 2", "ХОБЛ", "ССЗ", "Онкология"];
+    const chronicList = chronicIdx
+        .map((q, i) => docData[`p${q}`] === 1 ? chronicNames[i] : null)
+        .filter(Boolean);
+
+    const alcIdx = [16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
+    let alcSum = 0;
+    alcIdx.forEach(i => {
+        alcSum += patientQuestions[i - 1].options[docData[`p${i}`]].score;
+    });
+    const alcInfo = alcSum >= 15 ? "Высокая вероятность зависимости" :
+        alcSum >= 8 ? "Повышенный риск" : "Риск незначительный";
+
+    // Группа здоровья
+    let group;
+    if (chronicList.length > 0) group = "3А";
+    else if (docData.p16 === 1) group = "3Б";
+    else if (docData.p7 > 65) group = "2";
+    else if (bmi >= 30 || chol >= 8 || sbp >= 140 || dbp >= 90 ||
+        smokeIdx > 0 || alcSum >= 8) group = "2";
+    else group = "1";
+
+    // Добавляем все данные в объект
+    Object.assign(upd, {
+        bmi: +bmi, bmiInfo,
+        chol, cholInfo,
+        sbp, dbp, bpInfo,
+        smokeText,
+        chronicList: chronicList.join(", "),
+        alcSum, alcInfo,
+        group
+    });
+
+    // Сохраняем обновленный документ
+    await updateDoc(doc(db, "surveys", id), upd);
+
+    // Выводим результаты на экран
+    box.innerHTML = "";
+    const done = document.createElement("div");
+    done.className = "space-y-2 text-left";
+    [
+        `Итоговый балл: ${upd.score}`,
+        `ИМТ: ${bmi} (${bmiInfo})`,
+        `Холестерин: ${chol} ммоль/л (${cholInfo})`,
+        `АД: ${sbp}/${dbp} мм рт.ст. (${bpInfo})`,
+        `Курение: ${smokeText}`,
+        `Хронические заболевания: ${chronicList.join(", ") || "нет"}`,
+        `Алкогольный индекс (AUDIT): ${alcSum} (${alcInfo})`,
+        `Группа здоровья: ${group}`
+    ].forEach(t => {
+        const p = document.createElement("p");
+        p.className = "px-4 py-2 bg-white/50 rounded";
+        p.textContent = t;
+        done.append(p);
+    });
+    box.append(done);
+}
 }
 
 /* ========= 5. QR ========= */
@@ -355,142 +439,99 @@ function renderDoctorSearch(){
   c.append(inp,btn); root.appendChild(c);
 }
 
-/* ========= 6. Doctor ========= */
-async function initDoctor () {
-  const u  = new URL(location.href);
-  const id = u.searchParams.get("id");
-  id ? renderDoctor(id) : renderDoctorSearch();
-}
+async function renderDoctor(id){
+  const dSnap=await getDoc(doc(db,"surveys",id));
+  if(!dSnap.exists()) return alert("Анкета не найдена");
 
-function renderDoctorSearch () {
-  const c = card();
-  c.append(label("Введите код пациента:"));
+  const docData=dSnap.data();
+  const answers=[]; let step=0;
+  const box=card(); root.appendChild(box); render();
 
-  const inp = document.createElement("input");
-  inp.maxLength = 4;
-  inp.className = baseInput;
-
-  const btn = makeBtn("Найти","emerald");
-  btn.onclick = async () => {
-    if (inp.value.length !== 4) return alert("Код из 4 цифр");
-    const q  = query(collection(db,"surveys"), where("code","==", inp.value));
-    const qs = await getDocs(q);
-    if (qs.empty) return alert("Анкета не найдена");
-    location.href = `${location.pathname}?role=doctor&id=${qs.docs[0].id}`;
-  };
-
-  c.append(inp, btn);
-  root.appendChild(c);
-}
-
-/* ────────────────────────────────────────────── */
-/*                 главный поток врача           */
-/* ────────────────────────────────────────────── */
-async function renderDoctor (id) {
-  const dSnap = await getDoc(doc(db,"surveys",id));
-  if (!dSnap.exists()) return alert("Анкета не найдена");
-
-  const docData = dSnap.data();   // ответы пациента
-  const answers = [];             // ответы врача
-  let   step    = 0;
-
-  const box = card();
-  root.appendChild(box);
-
-  /* ---------- шаги вопросов врачу ---------- */
-  function render () {
-    box.innerHTML = "";
-
-    if (step === 0) {
-      const h = qLabel(`Код пациента: ${docData.code}`);
-      h.classList.add("text-center");
-      box.appendChild(h);
+  function render(){
+    box.innerHTML="";
+    if(step===0){
+      const h=qLabel(`Код пациента: ${docData.code}`);
+      h.classList.add("text-center"); box.appendChild(h);
     }
+    if(step>=doctorQuestions.length){ finish(); return; }
 
-    if (step >= doctorQuestions.length) { finish(); return; }
-
-    const q = doctorQuestions[step];
-    const qWrap = document.createElement("div");
-    qWrap.className = "mb-6";
+    const q=doctorQuestions[step];
+    const qWrap=document.createElement("div");
+    qWrap.className="mb-6";
     qWrap.appendChild(qLabel(q.label));
 
-    let sliderObj, selections = [];
-
-    if (["slider","number","age"].includes(q.type)) {
-      sliderObj = makeSlider(q);
+    let sliderObj,selections=[];
+    if(["slider","number","age"].includes(q.type)){
+      sliderObj=makeSlider(q);
       qWrap.appendChild(sliderObj.wrap);
-
-      const next = makeBtn("Далее");
-      next.onclick = () => { answers.push(sliderObj.val()); step++; render(); };
-      box.append(qWrap, next);
+      const next=makeBtn("Далее");
+      next.onclick=()=>{ answers.push(sliderObj.val()); step++; render(); };
+      box.append(qWrap,next);
     }
-    else if (q.type === "single") {
-      const opts = document.createElement("div");
-      q.options.forEach((opt,i) => {
-        const b = document.createElement("button");
-        b.textContent = opt.label;
-        b.className   = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50";
-        b.onclick     = () => { answers.push(i); step++; render(); };
+    else if(q.type==="single"){
+      const opts=document.createElement("div");
+      q.options.forEach((opt,i)=>{
+        const b=document.createElement("button");
+        b.textContent=opt.label;
+        b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-indigo-50";
+        b.onclick=()=>{ answers.push(i); step++; render(); };
         opts.appendChild(b);
       });
-      qWrap.appendChild(opts);
-      box.appendChild(qWrap);
+      qWrap.appendChild(opts); box.appendChild(qWrap);
     }
-    else if (q.type === "multi") {
+    else if(q.type==="multi"){
       qWrap.appendChild(noteMulti());
-      const opts = document.createElement("div");
-      q.options.forEach((opt,i) => {
-        const b = document.createElement("button");
-        b.textContent = opt.label;
-        b.className   = "w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50";
-        b.onclick     = () => {
+      const opts=document.createElement("div");
+      q.options.forEach((opt,i)=>{
+        const b=document.createElement("button");
+        b.textContent=opt.label;
+        b.className="w-full mb-3 py-3 rounded-lg border text-lg hover:bg-emerald-50";
+        b.onclick=()=>{
           selections.includes(i)
-            ? (selections = selections.filter(x => x !== i), b.classList.remove("bg-emerald-200"))
-            : (selections.push(i),                     b.classList.add("bg-emerald-200"));
+            ? (selections=selections.filter(x=>x!==i), b.classList.remove("bg-emerald-200"))
+            : (selections.push(i), b.classList.add("bg-emerald-200"));
         };
         opts.appendChild(b);
       });
       qWrap.appendChild(opts);
-
-      const next = makeBtn("Далее");
-      next.onclick = () => { answers.push(selections); step++; render(); };
-      box.append(qWrap, next);
+      const next=makeBtn("Далее");
+      next.onclick=()=>{ answers.push(selections); step++; render(); };
+      box.append(qWrap,next);
     }
   }
 
   /* ---------- ФИНАЛ С РАСЧЁТАМИ ---------- */
-  async function finish () {
-    /* 1. сохраняем ответы врача */
-    const upd = {};
-    doctorQuestions.forEach((_, i) => upd[`d${i+1}`] = answers[i]);
+  async function finish(){
+    /* 1) сохраняем базовые ответы и баллы */
+    const upd={};
+    doctorQuestions.forEach((_,i)=>upd[`d${i+1}`]=answers[i]);
+    upd.score       = calcTotal({...docData,...upd});
+    upd.finishedAt  = Date.now();
+    await updateDoc(doc(db,"surveys",id),upd);
 
-    /* 2. базовые поля */
-    upd.score      = calcTotal({ ...docData, ...upd });
-    upd.finishedAt = Date.now();
-
-    /* 3. дополнительные вычисления */
-    const weight   = docData.p8;
-    const heightM  = docData.p9 / 100;
-    const bmi      = (weight / (heightM * heightM)).toFixed(1);
-    const bmiInfo  = bmi < 18.5 ? "Недостаточный вес"
-                  : bmi < 25   ? "Нормальный вес"
-                  : bmi < 30   ? "Избыточный вес"
-                               : "Ожирение — фактор риска";
+    /* 2) вычисляем дополнительные показатели */
+    const weight   = docData.p8;           // вес, кг
+    const heightM  = docData.p9/100;       // рост, м
+    const bmi      = (weight/(heightM*heightM)).toFixed(1);
+    const bmiInfo  = bmi<18.5 ? "Недостаточный вес"
+                  : bmi<25   ? "Нормальный вес"
+                  : bmi<30   ? "Избыточный вес"
+                             : "Ожирение — фактор риска";
 
     const chol     = upd.d5;
-    const cholInfo = chol < 5.2 ? "Норма"
-                  : chol < 8   ? "Погранично повышен"
-                               : "Высокий — фактор риска";
+    const cholInfo = chol<5.2 ? "Норма"
+                  : chol<8   ? "Погранично повышен"
+                             : "Высокий — фактор риска";
 
     const sbp      = upd.d3, dbp = upd.d4;
-    const bpInfo   = (sbp < 120 && dbp < 80) ? "Оптимальное давление"
-                  : (sbp < 130 && dbp < 85) ? "Нормальное давление"
-                  : (sbp < 140 || dbp < 90) ? "Пограничная гипертензия"
-                                           : "Гипертензия";
+    const bpInfo   = (sbp<120&&dbp<80)      ? "Оптимальное давление"
+                  : (sbp<130&&dbp<85)       ? "Нормальное давление"
+                  : (sbp<140||dbp<90)       ? "Пограничная гипертензия"
+                                            : "Гипертензия";
 
     const smokeIdx  = docData.p10;
     const smokeText = patientQuestions[9].options[smokeIdx].label +
-                      (smokeIdx > 0 ? " — фактор риска" : "");
+                      (smokeIdx>0 ? " — фактор риска" : "");
 
     const chronicIdx   = [11,12,13,14,15];
     const chronicNames = ["Диабет 1","Диабет 2","ХОБЛ","ССЗ","Онкология"];
@@ -499,61 +540,49 @@ async function renderDoctor (id) {
                           .filter(Boolean);
 
     const alcIdx = [16,17,18,19,20,21,22,23,24,25];
-    let alcSum = 0;
-    alcIdx.forEach(i =>
-      alcSum += patientQuestions[i-1].options[docData[`p${i}`]].score
-    );
-    const alcInfo = alcSum >= 15 ? "Высокая вероятность зависимости"
-                  : alcSum >= 8  ? "Повышенный риск"
-                                 : "Риск незначительный";
-
-    /* 4. группа здоровья */
-    let group;
-    if (chronicList.length > 0)                               group = "3А";
-    else if (docData.p16 === 1)                               group = "3Б";
-    else if (docData.p7  > 65)                                group = "2";
-    else if (bmi >= 30 || chol >= 8 || sbp >= 140 || dbp >= 90 ||
-             smokeIdx > 0 || alcSum >= 8)                     group = "2";
-    else                                                      group = "1";
-
-    /* 5. складываем всё в документ Firestore */
-    Object.assign(upd, {
-      bmi: +bmi,            bmiInfo,
-      chol,                 cholInfo,
-      sbp, dbp,             bpInfo,
-      smokeText,
-      chronicList: chronicList.join(", "),
-      alcSum,               alcInfo,
-      group
+    let alcSum=0;
+    alcIdx.forEach(i=>{
+      alcSum += patientQuestions[i-1].options[docData[`p${i}`]].score;
     });
+    const alcInfo = alcSum>=15 ? "Высокая вероятность зависимости"
+                  : alcSum>=8  ? "Повышенный риск"
+                               : "Риск незначительный";
 
-    await updateDoc(doc(db,"surveys",id), upd);
+    /* 3) определяем группу здоровья */
+    let group;
+    if(chronicList.length>0)                               group="3А";
+    else if(docData.p16===1)                               group="3Б";
+    else if(docData.p7>65)                                 group="2";
+    else if(bmi>=30 || chol>=8 || sbp>=140 || dbp>=90 ||
+            smokeIdx>0 || alcSum>=8)                       group="2";
+    else                                                   group="1";
 
-    /* 6. вывод врачу */
-    box.innerHTML = "";
-    const done = document.createElement("div");
-    done.className = "space-y-2 text-left";
+    upd.group = group;
+    await updateDoc(doc(db,"surveys",id),upd);
+
+    /* 4) вывод результатов врачу */
+    box.innerHTML="";
+    const done=document.createElement("div");
+    done.className="space-y-2 text-left";
+
     [
       `Итоговый балл: ${upd.score}`,
       `ИМТ: ${bmi} (${bmiInfo})`,
       `Холестерин: ${chol} ммоль/л (${cholInfo})`,
       `АД: ${sbp}/${dbp} мм рт.ст. (${bpInfo})`,
       `Курение: ${smokeText}`,
-      `Хронические заболевания: ${chronicList.join(", ") || "нет"}`,
-      `Алкогольный индекс (AUDIT): ${alcSum} (${alcInfo})`,
+      `Хронические заболевания: ${chronicList.join(", ")||"нет"}`,
+      `Алкогольный индекс (AUDIT), норма до 8: ${alcSum} (${alcInfo})`,
       `Группа здоровья: ${group}`
-    ].forEach(t => {
-      const p = document.createElement("p");
-      p.className = "px-4 py-2 bg-white/50 rounded";
-      p.textContent = t;
+    ].forEach(text=>{
+      const p=document.createElement("p");
+      p.className="px-4 py-2 bg-white/50 rounded";
+      p.textContent=text;
       done.append(p);
     });
     box.append(done);
   }
-
-  render();   // запускаем первый вопрос
 }
-/* ========= 7. Admin ========= */
 
 /* ========= 7. Admin ========= */
 async function initAdmin(){
@@ -570,7 +599,24 @@ async function initAdmin(){
 }
 
 /* ---------- helpers --------- */
-function flat (v) { return { ...v }; }
+function flat(v){
+  const pick=(arr,idx)=>(
+    idx!=null && Array.isArray(arr) && idx>=0 && idx<arr.length
+      ? (arr[idx]?.label ?? arr[idx] ?? "")
+      : ""
+  );
+  return {
+    code: v.code??"", fio:v.p1??"", age:v.p2??"", weight:v.p3??"",
+    chills: pick(patientQuestions[3]?.options, v.p4),
+    symptoms: Array.isArray(v.p5)
+      ? v.p5.map(i=>pick(patientQuestions[4]?.options,i)).join(", ") : "",
+    pain:v.p6??"", energy:v.p7??"", anxiety:v.p8??"", mood:v.p9??"", expect:v.p10??"",
+    spo2:v.d1??"", auscult:pick(doctorQuestions[1]?.options,v.d2),
+    rr:v.d3??"", state:v.d4??"",
+    therapy:Array.isArray(v.d5)?v.d5.map(i=>pick(doctorQuestions[4]?.options,i)).join(", "):"",
+    score:v.score??""
+  };
+}
 
 function showMsg(text){
   const c=card();
@@ -655,3 +701,4 @@ else if(role==="admin")   initAdmin();
   </header>
 </body>
 </html>
+
