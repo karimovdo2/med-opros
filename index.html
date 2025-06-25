@@ -141,6 +141,32 @@ const doctorQuestions = [
   { type:"slider", label:"Холестерин, ммоль/л",    min:0, max:20,  start:4,  unit:" ммоль/л",   scoreFormula:v=>v<5.2?0:2 }
 ];
 
+/* ---------- порядок колонок для таблицы / Excel ---------- */
+const patientKeys = Array.from({ length: patientQuestions.length },
+                               (_, i) => `p${i + 1}`);
+const doctorKeys  = Array.from({ length: doctorQuestions.length },
+                               (_, i) => `d${i + 1}`);
+
+const calcKeys = [
+  "score",
+  "bmi", "bmiInfo",
+  "chol", "cholInfo",
+  "sbp", "dbp", "bpInfo",
+  "smokeText",
+  "chronicList",
+  "alcSum", "alcInfo",
+  "group"
+];
+
+const columns = [
+  "id",          // id документа Firestore
+  "createdAt",   // штамп времени
+  ...patientKeys,
+  ...doctorKeys,
+  ...calcKeys
+];
+
+
 /**************** DOM helpers ****************/
 const root      = document.body;
 const baseInput = "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg";
@@ -453,26 +479,65 @@ async function initAdmin () {
   const rows=[]; snap.forEach(d=>rows.push({id:d.id,...d.data()}));
   renderTable(rows);
 }
+function flat (v) {
+  const row = {};
+  columns.forEach(k => {               // гарантированное наличие и порядок
+    row[k] = v[k] ?? "";
+  });
 
+  // пример «красивой» даты вместо миллисекунд
+  if (row.createdAt) {
+    row.createdAt = new Date(+row.createdAt).toLocaleString();
+  }
+
+  return row;
+}
 function showMsg (txt){ const c=card(); c.textContent=txt; c.className+=" text-center text-red-600"; root.append(c); }
 
-function renderTable (arr){
-  const c=card(); const tbl=document.createElement("table"); tbl.className="min-w-full text-xs md:text-sm border";
-  const thead=document.createElement("thead"), trh=document.createElement("tr");
-  Object.keys(arr[0]).forEach(k=>{const th=document.createElement("th"); th.textContent=k; th.className="border px-2 py-1 bg-gray-100 sticky top-0"; trh.append(th);});
-  thead.append(trh); tbl.append(thead);
-  const tbody=document.createElement("tbody");
-  arr.forEach(r=>{const tr=document.createElement("tr"); Object.values(r).forEach(v=>{const td=document.createElement("td"); td.textContent=v; td.className="border px-2 py-1"; tr.append(td);}); tbody.append(tr);});
-  tbl.append(tbody);
+function renderTable (arr) {
+  const c   = card();
+  const tbl = document.createElement("table");
+  tbl.className = "min-w-full text-xs md:text-sm border";
 
-  const btn=makeBtn("Скачать Excel");
-  btn.onclick=()=>{
-    const ws=XLSX.utils.json_to_sheet(arr,{header:Object.keys(arr[0])});
-    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Surveys"); XLSX.writeFile(wb,"surveys.xlsx");
+  /* ---- шапка ---- */
+  const thead = document.createElement("thead");
+  const hr    = document.createElement("tr");
+  columns.forEach(k => {
+    const th = document.createElement("th");
+    th.textContent = k;
+    th.className   = "border px-2 py-1 bg-gray-100 sticky top-0";
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+
+  /* ---- тело ---- */
+  const tbody = document.createElement("tbody");
+  arr.forEach(r => {
+    const tr = document.createElement("tr");
+    columns.forEach(k => {
+      const td = document.createElement("td");
+      td.textContent = r[k];
+      td.className   = "border px-2 py-1";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+
+  /* ---- экспорт Excel ---- */
+  const btn = makeBtn("Скачать Excel","emerald");
+  btn.onclick = () => {
+    const ws = XLSX.utils.json_to_sheet(arr, { header: columns });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Surveys");
+    XLSX.writeFile(wb, "surveys.xlsx");
   };
 
-  c.append(tbl,btn); root.append(c);
+  c.append(tbl, btn);
+  root.appendChild(c);
 }
+
 
 /******************* Суммарный счёт *******************/
 function calcTotal (d){
